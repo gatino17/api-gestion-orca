@@ -1,0 +1,19 @@
+# Entorno Virtual
+venv/
+__pycache__/
+
+# Archivos de configuración
+*.env
+
+# Archivos temporales de sistema
+.DS_Store
+Thumbs.db
+
+# Configuración de VSCode
+.vscode/
+
+# Archivos compilados de Python
+*.pyc
+
+# Subidas de usuarios
+uploads/
