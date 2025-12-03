@@ -59,8 +59,7 @@ def listar_actas():
                 else_=None
             ).label("documento_instalacion"),
             InstalacionNueva.fecha_instalacion.label("fecha_instalacion")
-        ).join(Centro, InstalacionNueva.centro_id == Centro.id_centro)\
-         .filter(*filtros_base).subquery()
+        ).join(Centro, InstalacionNueva.centro_id == Centro.id_centro).subquery()
 
         levantamientos_subq = db.session.query(
             Levantamiento.centro_id.label("cid"),
@@ -71,8 +70,7 @@ def listar_actas():
                 else_=None
             ).label("documento_levantamiento"),
             Levantamiento.fecha_levantamiento.label("fecha_levantamiento")
-        ).join(Centro, Levantamiento.centro_id == Centro.id_centro)\
-         .filter(*filtros_base).subquery()
+        ).join(Centro, Levantamiento.centro_id == Centro.id_centro).subquery()
 
         mantenciones_subq = db.session.query(
             Mantencion.centro_id.label("cid"),
@@ -82,8 +80,7 @@ def listar_actas():
                 else_=None
             ).label("documento_mantencion"),
             Mantencion.fecha_mantencion.label("fecha_mantencion")
-        ).join(Centro, Mantencion.centro_id == Centro.id_centro)\
-         .filter(*filtros_base).subquery()
+        ).join(Centro, Mantencion.centro_id == Centro.id_centro).subquery()
 
         retiros_subq = db.session.query(
             Retiro.centro_id.label("cid"),
@@ -93,8 +90,7 @@ def listar_actas():
                 else_=None
             ).label("documento_retiro"),
             Retiro.fecha_de_retiro.label("fecha_retiro")
-        ).join(Centro, Retiro.centro_id == Centro.id_centro)\
-         .filter(*filtros_base).subquery()
+        ).join(Centro, Retiro.centro_id == Centro.id_centro).subquery()
 
         traslados_subq = db.session.query(
             Traslado.centro_origen_id.label("cid"),
@@ -104,8 +100,7 @@ def listar_actas():
                 else_=None
             ).label("documento_traslado"),
             Traslado.fecha_traslado.label("fecha_traslado")
-        ).join(Centro, Traslado.centro_origen_id == Centro.id_centro)\
-         .filter(*filtros_base).subquery()
+        ).join(Centro, Traslado.centro_origen_id == Centro.id_centro).subquery()
 
         ceses_subq = db.session.query(
             Cese.centro_id.label("cid"),
@@ -115,8 +110,7 @@ def listar_actas():
                 else_=None
             ).label("documento_cese"),
             Cese.fecha_cese.label("fecha_cese")
-        ).join(Centro, Cese.centro_id == Centro.id_centro)\
-         .filter(*filtros_base).subquery()
+        ).join(Centro, Cese.centro_id == Centro.id_centro).subquery()
 
         inventarios_subq = db.session.query(
             Inventario.centro_id.label("cid"),
@@ -125,8 +119,7 @@ def listar_actas():
                  func.concat("http://localhost:5000/api/filtro/documento/Inventarios/", Inventario.id_inventario)),
                 else_=None
             ).label("documento_inventario")
-        ).join(Centro, Inventario.centro_id == Centro.id_centro)\
-         .filter(*filtros_base).subquery()
+        ).join(Centro, Inventario.centro_id == Centro.id_centro).subquery()
 
         actividades_query = db.session.query(
             Centro.id_centro.label("id_centro"),
@@ -134,6 +127,7 @@ def listar_actas():
             Centro.area.label("area"),
             Centro.ubicacion.label("ubicacion"),
             Centro.estado.label("estado"),
+            Centro.fecha_instalacion.label("centro_fecha_instalacion"),
             Cliente.nombre.label("nombre_cliente"),
             instalaciones_subq.c.documento_instalacion,
             instalaciones_subq.c.fecha_instalacion,
@@ -169,6 +163,7 @@ def listar_actas():
                 "ubicacion": row.ubicacion,
                 "estado": row.estado,
                 "nombre_cliente": row.nombre_cliente,
+                "centro_fecha_instalacion": row.centro_fecha_instalacion,
                 "instalacion_fecha": row.fecha_instalacion,
                 "instalacion_documento": row.documento_instalacion,
                 "levantamiento_fecha": row.fecha_levantamiento,

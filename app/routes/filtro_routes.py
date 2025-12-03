@@ -1,3 +1,4 @@
+from datetime import datetime
 from flask import Blueprint, request, jsonify, send_file
 from sqlalchemy import and_, literal, func, case
 from sqlalchemy.orm import aliased
@@ -43,11 +44,14 @@ def filtrar_por_fecha_y_cliente():
             except ValueError:
                 return jsonify({"error": "El cliente_id debe ser un número válido"}), 400
 
-        # Filtro básico por rango de fechas
-        filtro_fecha = and_(
-            Cese.fecha_cese >= fecha_inicio, 
-            Cese.fecha_cese <= fecha_fin
-        )
+        try:
+            fecha_inicio_dt = datetime.strptime(fecha_inicio, "%Y-%m-%d").date()
+            fecha_fin_dt = datetime.strptime(fecha_fin, "%Y-%m-%d").date()
+        except ValueError:
+            return jsonify({"error": "Formato de fecha inválido. Use YYYY-MM-DD"}), 400
+
+        def rango(columna):
+            return and_(columna >= fecha_inicio_dt, columna <= fecha_fin_dt)
         
         # Agregar filtro por cliente si está presente
         filtro_cliente = True  # Por defecto no filtra por cliente
@@ -72,7 +76,7 @@ def filtrar_por_fecha_y_cliente():
         ).join(Centro, Cese.centro_id == Centro.id_centro).join(
             RazonSocial, Centro.razon_social_id == RazonSocial.id_razon_social
         ).filter(
-            filtro_fecha, filtro_cliente
+            rango(Cese.fecha_cese), filtro_cliente
         ).distinct().all()
 
         levantamientos = db.session.query(
@@ -92,7 +96,7 @@ def filtrar_por_fecha_y_cliente():
         ).join(Centro, Levantamiento.centro_id == Centro.id_centro).join(
             RazonSocial, Centro.razon_social_id == RazonSocial.id_razon_social
         ).filter(
-            filtro_fecha, filtro_cliente
+            rango(Levantamiento.fecha_levantamiento), filtro_cliente
         ).distinct().all()
 
         instalaciones = db.session.query(
@@ -112,7 +116,7 @@ def filtrar_por_fecha_y_cliente():
         ).join(Centro, InstalacionNueva.centro_id == Centro.id_centro).join(
             RazonSocial, Centro.razon_social_id == RazonSocial.id_razon_social
         ).filter(
-            filtro_fecha, filtro_cliente
+            rango(InstalacionNueva.fecha_instalacion), filtro_cliente
         ).distinct().all()
 
         retiros = db.session.query(
@@ -132,7 +136,7 @@ def filtrar_por_fecha_y_cliente():
         ).join(Centro, Retiro.centro_id == Centro.id_centro).join(
             RazonSocial, Centro.razon_social_id == RazonSocial.id_razon_social
         ).filter(
-            filtro_fecha, filtro_cliente
+            rango(Retiro.fecha_de_retiro), filtro_cliente
         ).distinct().all()
 
         traslados = db.session.query(
@@ -159,7 +163,7 @@ def filtrar_por_fecha_y_cliente():
         ).join(
             RazonSocial, Centro.razon_social_id == RazonSocial.id_razon_social
         ).filter(
-            filtro_fecha, filtro_cliente
+            rango(Traslado.fecha_traslado), filtro_cliente
         ).distinct().all()
 
         mantenciones = db.session.query(
@@ -179,7 +183,7 @@ def filtrar_por_fecha_y_cliente():
         ).join(Centro, Mantencion.centro_id == Centro.id_centro).join(
             RazonSocial, Centro.razon_social_id == RazonSocial.id_razon_social
         ).filter(
-            filtro_fecha, filtro_cliente
+            rango(Mantencion.fecha_mantencion), filtro_cliente
         ).distinct().all()
 
         servicios_adicionales = db.session.query(
@@ -199,7 +203,7 @@ def filtrar_por_fecha_y_cliente():
         ).join(
             RazonSocial, ServiciosAdicionales.id_razon_social == RazonSocial.id_razon_social
         ).filter(
-            filtro_fecha, filtro_cliente
+            rango(ServiciosAdicionales.fecha_instalacion), filtro_cliente
         ).distinct().all()
 
         # Combinar resultados

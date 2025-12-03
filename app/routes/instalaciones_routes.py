@@ -49,7 +49,8 @@ def crear_instalacion_logic(data, file):
     try:
         # Validar centro_id
         centro_id = data.get('centro_id')
-        if not centro_id or not Centro.query.get(centro_id):
+        centro = Centro.query.get(centro_id) if centro_id else None
+        if not centro:
             return {"error": "Centro no encontrado"}, 404
 
         # Validar fecha_instalacion
@@ -58,29 +59,49 @@ def crear_instalacion_logic(data, file):
             return {"error": "El campo 'fecha_instalacion' es obligatorio"}, 400
         fecha_instalacion = datetime.strptime(fecha_instalacion, '%Y-%m-%d').date()
 
-        # Guardar el archivo si está presente
+        inicio_monitoreo = data.get('inicio_monitoreo')
+        if inicio_monitoreo:
+            inicio_monitoreo = datetime.strptime(inicio_monitoreo, '%Y-%m-%d').date()
+        else:
+            inicio_monitoreo = fecha_instalacion
+
+        # Guardar el archivo si esta presente
         documento_path = None
         if file and is_allowed_file(file.filename):
             filename = f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{secure_filename(file.filename)}"
             documento_path = f"instalaciones_docs/{filename}"
             file.save(os.path.join(UPLOAD_FOLDER, filename))
 
-        # Crear la instalación
-        nueva_instalacion = InstalacionNueva(
-            centro_id=centro_id,
-            fecha_instalacion=fecha_instalacion,
-            inicio_monitoreo=data.get('inicio_monitoreo'),
-            documento_acta=documento_path,
-            observacion=data.get('observacion')
+        instalacion = (
+            InstalacionNueva.query.filter_by(centro_id=centro_id)
+            .order_by(InstalacionNueva.id_instalacion.asc())
+            .first()
         )
-        db.session.add(nueva_instalacion)
+
+        if instalacion:
+            instalacion.fecha_instalacion = fecha_instalacion
+            instalacion.inicio_monitoreo = inicio_monitoreo
+            if documento_path:
+                instalacion.documento_acta = documento_path
+            if data.get('observacion') is not None:
+                instalacion.observacion = data.get('observacion')
+        else:
+            instalacion = InstalacionNueva(
+                centro_id=centro_id,
+                fecha_instalacion=fecha_instalacion,
+                inicio_monitoreo=inicio_monitoreo,
+                documento_acta=documento_path,
+                observacion=data.get('observacion')
+            )
+            db.session.add(instalacion)
+
+        centro.fecha_instalacion = fecha_instalacion
         db.session.commit()
 
-        return {"message": "Instalación creada exitosamente", "id_instalacion": nueva_instalacion.id_instalacion}, 201
+        return {"message": "Instalacion guardada exitosamente", "id_instalacion": instalacion.id_instalacion}, 201
     except Exception as e:
         db.session.rollback()
         return {"error": str(e)}, 400
-
 
 # Descargar el documento asociado a una instalación
 #@instalaciones_blueprint.route('/<int:id_instalacion>/documento', methods=['GET'])
@@ -114,9 +135,12 @@ def actualizar_instalacion_logic(id_instalacion):
         # Actualizar campos
         if data.get('centro_id'):
             centro_id = int(data.get('centro_id'))
-            if not Centro.query.get(centro_id):
+            centro = Centro.query.get(centro_id)
+            if not centro:
                 return jsonify({"error": "Centro no encontrado"}), 404
             instalacion.centro_id = centro_id
+        else:
+            centro = instalacion.centro
 
         if data.get('fecha_instalacion'):
             instalacion.fecha_instalacion = datetime.strptime(data.get('fecha_instalacion'), '%Y-%m-%d').date()
@@ -138,8 +162,11 @@ def actualizar_instalacion_logic(id_instalacion):
             file.save(absolute_path)
             instalacion.documento_acta = relative_path
 
+        if centro:
+            centro.fecha_instalacion = instalacion.fecha_instalacion
+
         db.session.commit()
-        return jsonify({"message": "Instalación actualizada exitosamente"}), 200
+        return jsonify({"message": "Instalacion actualizada exitosamente"}), 200
     except Exception as e:
         db.session.rollback()
         return jsonify({"error": str(e)}), 400

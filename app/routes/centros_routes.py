@@ -1,9 +1,47 @@
+from datetime import datetime, date
 from flask import Blueprint, request, jsonify
 from sqlalchemy import asc, desc
-from ..models import Centro,  Cliente, RazonSocial, EquiposIP, ConexionesEspeciales
+from ..models import Centro,  Cliente, RazonSocial, EquiposIP, ConexionesEspeciales, InstalacionNueva
 from ..database import db
 
 centros_blueprint = Blueprint('centros', __name__)
+
+
+def _parse_date(value):
+    if not value:
+        return None
+    if isinstance(value, date):
+        return value
+    if isinstance(value, datetime):
+        return value.date()
+    try:
+        return datetime.strptime(value, '%Y-%m-%d').date()
+    except (ValueError, TypeError):
+        return None
+
+
+def _sincronizar_instalacion(centro_id, fecha):
+    if not fecha:
+        return
+    instalacion = (
+        InstalacionNueva.query.filter_by(centro_id=centro_id)
+        .order_by(InstalacionNueva.id_instalacion.asc())
+        .first()
+    )
+    if instalacion:
+        instalacion.fecha_instalacion = fecha
+        if not instalacion.inicio_monitoreo:
+            instalacion.inicio_monitoreo = fecha
+    else:
+        nueva = InstalacionNueva(
+            centro_id=centro_id,
+            fecha_instalacion=fecha,
+            inicio_monitoreo=fecha,
+            documento_acta=None,
+            observacion="Sincronizado automaticamente desde Centros"
+        )
+        db.session.add(nueva)
+    db.session.commit()
 
 # Ruta para obtener todos los centros
 @centros_blueprint.route('/', methods=['GET'])
@@ -83,9 +121,13 @@ def get_centros():
 @centros_blueprint.route('/', methods=['POST'])
 def crear_centro():
     data = request.get_json()
-    # Validaciones básicas
+    # Validaciones basicas
     if not data.get('nombre') or not data.get('cliente_id') or not data.get('razon_social_id'):
         return jsonify({"message": "Datos incompletos"}), 400
+
+    fecha_instalacion = _parse_date(data.get('fecha_instalacion'))
+    fecha_activacion = _parse_date(data.get('fecha_activacion'))
+    fecha_termino = _parse_date(data.get('fecha_termino'))
 
     try:
         nuevo_centro = Centro(
@@ -97,9 +139,9 @@ def crear_centro():
             telefono=data.get('telefono'),
             cliente_id=data.get('cliente_id'),
             razon_social_id=data.get('razon_social_id'),
-            fecha_instalacion=data.get('fecha_instalacion'),
-            fecha_activacion=data.get('fecha_activacion'),
-            fecha_termino=data.get('fecha_termino'),
+            fecha_instalacion=fecha_instalacion,
+            fecha_activacion=fecha_activacion,
+            fecha_termino=fecha_termino,
             cantidad_radares=data.get('cantidad_radares'),
             cantidad_camaras=data.get('cantidad_camaras'),
             base_tierra=data.get('base_tierra'),
@@ -110,6 +152,7 @@ def crear_centro():
 
         db.session.add(nuevo_centro)
         db.session.commit()
+        _sincronizar_instalacion(nuevo_centro.id_centro, fecha_instalacion)
         return jsonify({"message": "Centro creado exitosamente"}), 201
     except Exception as e:
         db.session.rollback()
@@ -123,7 +166,7 @@ def actualizar_centro(id_centro):
     if not centro:
         return jsonify({"message": "Centro no encontrado"}), 404
 
-    # Validación de cliente_id y razon_social_id
+    # Validacion de cliente_id y razon_social_id
     try:
         if data.get('cliente_id'):
             cliente_existente = Cliente.query.get(data['cliente_id'])
@@ -134,19 +177,20 @@ def actualizar_centro(id_centro):
         if data.get('razon_social_id'):
             razon_social_existente = RazonSocial.query.get(data['razon_social_id'])
             if not razon_social_existente:
-                return jsonify({"message": "Razón social no encontrada"}), 404
+                return jsonify({"message": "Razon social no encontrada"}), 404
             centro.razon_social_id = data['razon_social_id']
 
-        # Actualización de los demás campos
+        # Actualizacion de los demas campos
         centro.nombre = data.get('nombre', centro.nombre)
         centro.nombre_ponton = data.get('nombre_ponton', centro.nombre_ponton)
         centro.ubicacion = data.get('ubicacion', centro.ubicacion)
         centro.correo_centro = data.get('correo_centro', centro.correo_centro)
         centro.area = data.get('area', centro.area)
         centro.telefono = data.get('telefono', centro.telefono)
-        centro.fecha_instalacion = data.get('fecha_instalacion', centro.fecha_instalacion)
-        centro.fecha_activacion = data.get('fecha_activacion', centro.fecha_activacion)
-        centro.fecha_termino = data.get('fecha_termino', centro.fecha_termino)
+        nueva_fecha_instalacion = _parse_date(data.get('fecha_instalacion'))
+        centro.fecha_instalacion = nueva_fecha_instalacion or centro.fecha_instalacion
+        centro.fecha_activacion = _parse_date(data.get('fecha_activacion')) or centro.fecha_activacion
+        centro.fecha_termino = _parse_date(data.get('fecha_termino')) or centro.fecha_termino
         centro.cantidad_radares = data.get('cantidad_radares', centro.cantidad_radares)
         centro.cantidad_camaras = data.get('cantidad_camaras', centro.cantidad_camaras)
         centro.base_tierra = data.get('base_tierra', centro.base_tierra)
@@ -156,13 +200,15 @@ def actualizar_centro(id_centro):
 
         # Guardado en la base de datos
         db.session.commit()
+        fecha_sync = nueva_fecha_instalacion or centro.fecha_instalacion
+        if fecha_sync:
+            _sincronizar_instalacion(centro.id_centro, fecha_sync)
         return jsonify({"message": "Centro actualizado exitosamente"}), 200
 
     except Exception as e:
         db.session.rollback()
         print(f"Error al actualizar el centro {id_centro}: {e}")
         return jsonify({"message": f"Error al actualizar el centro: {str(e)}"}), 500
-
 
 # Ruta para eliminar un centro
 @centros_blueprint.route('/<int:id_centro>', methods=['DELETE'])

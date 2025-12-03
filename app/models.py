@@ -1,4 +1,4 @@
-from .database import db
+﻿from .database import db
 from datetime import datetime
 from sqlalchemy import Enum
 from sqlalchemy import LargeBinary
@@ -341,6 +341,8 @@ class Soporte(db.Model):
     categoria_falla = db.Column(db.String(50), nullable=True)
     cambio_equipo = db.Column(db.Boolean, default=False)
     equipo_cambiado = db.Column(db.String(100), nullable=True)
+    estado = db.Column(db.String(20), default='pendiente')  # <---
+    fecha_cierre = db.Column(db.Date, nullable=True)  
 
     # Relación con la tabla centros
     centro = db.relationship('Centro', backref=db.backref('soportes', cascade="all, delete-orphan"))
@@ -350,5 +352,8 @@ class Soporte(db.Model):
             f"<Soporte(id_soporte={self.id_soporte}, centro_id={self.centro_id}, problema='{self.problema}', "
             f"tipo='{self.tipo}', fecha_soporte={self.fecha_soporte}, solucion='{self.solucion}', "
             f"categoria_falla='{self.categoria_falla}', cambio_equipo={self.cambio_equipo}, "
-            f"equipo_cambiado='{self.equipo_cambiado}')>"
+            f"equipo_cambiado='{self.equipo_cambiado}', estado='{self.estado}', fecha_cierre={self.fecha_cierre})>"
         )
+
+
+

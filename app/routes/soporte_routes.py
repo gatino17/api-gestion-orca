@@ -17,7 +17,9 @@ def crear_soporte():
         solucion=data.get('solucion'),
         categoria_falla=data.get('categoria_falla'),
         cambio_equipo=data.get('cambio_equipo', False),
-        equipo_cambiado=data.get('equipo_cambiado')
+        equipo_cambiado=data.get('equipo_cambiado'),
+        estado=data.get('estado', 'pendiente'),
+        fecha_cierre=data.get('fecha_cierre')
     )
 
     db.session.add(nuevo_soporte)
@@ -44,7 +46,9 @@ def obtener_soportes():
             "solucion": soporte.solucion,
             "categoria_falla": soporte.categoria_falla,
             "cambio_equipo": soporte.cambio_equipo,
-            "equipo_cambiado": soporte.equipo_cambiado
+            "equipo_cambiado": soporte.equipo_cambiado,
+            "estado": soporte.estado,
+            "fecha_cierre": soporte.fecha_cierre
         })
 
     return jsonify(resultado), 200
@@ -63,6 +67,8 @@ def actualizar_soporte(id_soporte):
     soporte.categoria_falla = data.get('categoria_falla', soporte.categoria_falla)
     soporte.cambio_equipo = data.get('cambio_equipo', soporte.cambio_equipo)
     soporte.equipo_cambiado = data.get('equipo_cambiado', soporte.equipo_cambiado)
+    soporte.estado = data.get('estado', soporte.estado)
+    soporte.fecha_cierre = data.get('fecha_cierre', soporte.fecha_cierre)
 
     db.session.commit()
     return jsonify({"message": "Soporte actualizado exitosamente"}), 200
@@ -74,3 +80,7 @@ def eliminar_soporte(id_soporte):
     db.session.delete(soporte)
     db.session.commit()
     return jsonify({"message": "Soporte eliminado exitosamente"}), 200
+
+
+
+
