@@ -92,9 +92,12 @@ class EquiposIP(db.Model):
     codigo = db.Column(db.String(20), nullable=True)
     numero_serie = db.Column(db.String(30), nullable=True)
     estado = db.Column(db.String(20), nullable=True)
+    caja = db.Column(db.String(50), nullable=True)
+    caja_tecnico_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
 
     # Relación con Centro
     centro = db.relationship('Centro', backref=db.backref('equipos_ip', cascade="all, delete-orphan"))
+    caja_tecnico = db.relationship('User', foreign_keys=[caja_tecnico_id], backref='equipos_caja_asignados')
 
     def __repr__(self):
         return f"<EquiposIP {self.nombre} en centro {self.centro_id}>"
@@ -355,5 +358,84 @@ class Soporte(db.Model):
             f"equipo_cambiado='{self.equipo_cambiado}', estado='{self.estado}', fecha_cierre={self.fecha_cierre})>"
         )
 
+
+# Tabla Armados técnicos
+class Armado(db.Model):
+    __tablename__ = 'armados'
+
+    id_armado = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    centro_id = db.Column(db.Integer, db.ForeignKey('centros.id_centro'), nullable=False)
+    tecnico_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    estado = db.Column(db.String(20), default='pendiente')  # pendiente | en_proceso | finalizado
+    fecha_asignacion = db.Column(db.Date, default=datetime.utcnow)
+    fecha_inicio = db.Column(db.Date, nullable=True)
+    fecha_cierre = db.Column(db.Date, nullable=True)
+    observacion = db.Column(db.Text, nullable=True)
+    creado_por = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+
+    centro = db.relationship('Centro', backref=db.backref('armados', cascade="all, delete-orphan"))
+    tecnico = db.relationship('User', foreign_keys=[tecnico_id], backref='armados_asignados')
+    creador = db.relationship('User', foreign_keys=[creado_por], backref='armados_creados')
+
+    def __repr__(self):
+        return (
+            f"<Armado(id_armado={self.id_armado}, centro_id={self.centro_id}, tecnico_id={self.tecnico_id}, "
+            f"estado='{self.estado}', fecha_asignacion={self.fecha_asignacion}, "
+            f"fecha_inicio={self.fecha_inicio}, fecha_cierre={self.fecha_cierre})>"
+        )
+
+
+class ArmadoParticipacion(db.Model):
+    __tablename__ = 'armados_tecnicos'
+
+    id_participacion = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    armado_id = db.Column(db.Integer, db.ForeignKey('armados.id_armado', ondelete="CASCADE"), nullable=False)
+    tecnico_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    fecha_inicio = db.Column(db.Date, default=datetime.utcnow)
+    fecha_fin = db.Column(db.Date, nullable=True)
+    nota = db.Column(db.Text, nullable=True)
+
+    armado = db.relationship('Armado', backref=db.backref('participaciones', cascade="all, delete-orphan"))
+    tecnico = db.relationship('User', backref='participaciones_armados')
+
+    def __repr__(self):
+        return (
+            f"<ArmadoParticipacion(id_participacion={self.id_participacion}, armado_id={self.armado_id}, "
+            f"tecnico_id={self.tecnico_id}, fecha_inicio={self.fecha_inicio}, fecha_fin={self.fecha_fin})>"
+        )
+
+
+class ArmadoMaterial(db.Model):
+    __tablename__ = 'armados_materiales'
+
+    id_material = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    armado_id = db.Column(db.Integer, db.ForeignKey('armados.id_armado', ondelete="CASCADE"), nullable=False)
+    nombre = db.Column(db.String(200), nullable=False)
+    cantidad = db.Column(db.Numeric(10, 2), default=0)
+    caja = db.Column(db.String(50), default='Caja 1')
+    caja_tecnico_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+
+    armado = db.relationship('Armado', backref=db.backref('materiales', cascade="all, delete-orphan"))
+    caja_tecnico = db.relationship('User', foreign_keys=[caja_tecnico_id], backref='materiales_caja_asignados')
+
+
+class ArmadoCajaMovimiento(db.Model):
+    __tablename__ = 'armado_caja_movimientos'
+
+    id_movimiento = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    armado_id = db.Column(db.Integer, db.ForeignKey('armados.id_armado', ondelete="CASCADE"), nullable=False)
+    tipo = db.Column(db.String(20), nullable=False)  # 'material' | 'equipo'
+    item_id = db.Column(db.Integer, nullable=False)
+    nombre_item = db.Column(db.String(200), nullable=False)
+    caja = db.Column(db.String(50), nullable=False)
+    cantidad = db.Column(db.Numeric(10, 2), default=0)
+    tecnico_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    fecha = db.Column(db.DateTime, default=datetime.utcnow)
+
+    armado = db.relationship('Armado', backref=db.backref('caja_movimientos', cascade="all, delete-orphan"))
+    tecnico = db.relationship('User', backref='caja_movimientos')
+
+    def __repr__(self):
+        return f"<ArmadoMaterial(id_material={self.id_material}, armado_id={self.armado_id}, nombre='{self.nombre}', cantidad={self.cantidad})>"
 
 

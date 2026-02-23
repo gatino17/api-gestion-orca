@@ -32,6 +32,7 @@ from .routes.filtro_routes import filtro_blueprint
 from .routes.actas_routes import actas_blueprint
 from .routes.soporte_routes import soporte_blueprint
 from .routes.consultascentro_historial_routes import consultascentro_historial_bp
+from .routes.armados_routes import armados_blueprint
 
 
 
@@ -99,6 +100,7 @@ def create_app():
 
     app.register_blueprint(soporte_blueprint, url_prefix='/api/soporte')
     app.register_blueprint(consultascentro_historial_bp, url_prefix='/api/consultas_centro')
+    app.register_blueprint(armados_blueprint, url_prefix='/api/armados')
       
     
   # Ruta para servir archivos desde la carpeta `uploads`

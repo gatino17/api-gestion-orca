@@ -1,7 +1,7 @@
 from datetime import datetime, date
 from flask import Blueprint, request, jsonify
 from sqlalchemy import asc, desc
-from ..models import Centro,  Cliente, RazonSocial, EquiposIP, ConexionesEspeciales, InstalacionNueva
+from ..models import Centro,  Cliente, RazonSocial, EquiposIP, ConexionesEspeciales, InstalacionNueva, User
 from ..database import db
 
 centros_blueprint = Blueprint('centros', __name__)
@@ -252,7 +252,10 @@ def obtener_detalles_centro():
                 "observacion": equipo.observacion,
                 "codigo": equipo.codigo,
                 "numero_serie": equipo.numero_serie,
-                "estado": equipo.estado
+                "estado": equipo.estado,
+                "caja": equipo.caja,
+                "caja_tecnico_id": equipo.caja_tecnico_id,
+                "caja_tecnico_nombre": equipo.caja_tecnico.name if equipo.caja_tecnico else None
             } for equipo in equipos
         ],
         "conexiones": [
