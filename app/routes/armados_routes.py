@@ -209,7 +209,15 @@ def listar_movimientos_recientes():
     except ValueError:
         page = 1
 
+    armado_id = request.args.get('armado_id', type=int)
+    centro_id = request.args.get('centro_id', type=int)
+
     base_query = ArmadoCajaMovimiento.query.filter(ArmadoCajaMovimiento.cantidad != 0)  # solo cambios reales
+    if armado_id:
+        base_query = base_query.filter(ArmadoCajaMovimiento.armado_id == armado_id)
+    if centro_id:
+        base_query = base_query.join(Armado, Armado.id_armado == ArmadoCajaMovimiento.armado_id)\
+                               .filter(Armado.centro_id == centro_id)
     total = base_query.count()
     movs = (
         base_query
