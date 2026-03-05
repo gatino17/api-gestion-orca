@@ -124,6 +124,14 @@ def create_app():
                 """
             )
         )
+        db.session.execute(
+            text(
+                """
+                ALTER TABLE armados
+                ADD COLUMN IF NOT EXISTS total_cajas_manual INTEGER
+                """
+            )
+        )
         db.session.commit()
 
     return app

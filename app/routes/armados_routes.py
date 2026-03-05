@@ -46,7 +46,8 @@ def listar_armados():
         # calcular total de cajas (equipos del centro + materiales del armado)
         cajas_equipos = {e.caja or 'Caja 1' for e in EquiposIP.query.filter_by(centro_id=armado.centro_id).all()}
         cajas_materiales = {m.caja or 'Caja 1' for m in ArmadoMaterial.query.filter_by(armado_id=armado.id_armado).all()}
-        total_cajas = len(cajas_equipos.union(cajas_materiales)) or 0
+        total_cajas_calc = len(cajas_equipos.union(cajas_materiales)) or 0
+        total_cajas = max(total_cajas_calc, int(armado.total_cajas_manual or 0))
 
         # fecha_inicio real: si hay fecha_inicio ya fijada úsala, si no, la primera fecha de movimiento o la de asignación
         primera_mov = (
@@ -98,6 +99,7 @@ def crear_armado():
         fecha_inicio=parse_date(data.get('fecha_inicio')),
         fecha_cierre=parse_date(data.get('fecha_cierre')),
         observacion=data.get('observacion'),
+        total_cajas_manual=data.get('total_cajas_manual'),
         creado_por=data.get('creado_por')
     )
     db.session.add(nuevo)
@@ -125,6 +127,11 @@ def actualizar_armado(id_armado):
     armado.fecha_inicio = parse_date(data.get('fecha_inicio'))
     armado.fecha_cierre = parse_date(data.get('fecha_cierre'))
     armado.observacion = data.get('observacion', armado.observacion)
+    if 'total_cajas_manual' in data:
+        try:
+            armado.total_cajas_manual = int(data.get('total_cajas_manual') or 0)
+        except (TypeError, ValueError):
+            armado.total_cajas_manual = armado.total_cajas_manual
 
     db.session.commit()
     return jsonify({"message": "Armado actualizado"}), 200

@@ -371,6 +371,7 @@ class Armado(db.Model):
     fecha_inicio = db.Column(db.Date, nullable=True)
     fecha_cierre = db.Column(db.Date, nullable=True)
     observacion = db.Column(db.Text, nullable=True)
+    total_cajas_manual = db.Column(db.Integer, nullable=True)
     creado_por = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
 
     centro = db.relationship('Centro', backref=db.backref('armados', cascade="all, delete-orphan"))
