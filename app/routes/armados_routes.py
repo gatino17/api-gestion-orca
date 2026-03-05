@@ -145,37 +145,73 @@ def guardar_materiales(id_armado):
         return jsonify({"message": "Se espera una lista de materiales"}), 400
 
     Armado.query.get_or_404(id_armado)
-    # limpiar materiales existentes y reemplazar
-    ArmadoMaterial.query.filter_by(armado_id=id_armado).delete()
-    nuevos = []
+    existentes = ArmadoMaterial.query.filter_by(armado_id=id_armado).all()
+    por_nombre = {
+        (m.nombre or "").strip().lower(): m
+        for m in existentes
+        if (m.nombre or "").strip()
+    }
+    cambios = 0
+
     for item in payload:
-        nombre = item.get("nombre")
+        nombre = (item.get("nombre") or "").strip()
         if not nombre:
             continue
-        cantidad = item.get("cantidad") or 0
+
+        cantidad = float(item.get("cantidad") or 0)
         caja = item.get("caja") or 'Caja 1'
         caja_tecnico_id = item.get("caja_tecnico_id")
-        nuevos.append(ArmadoMaterial(armado_id=id_armado, nombre=nombre, cantidad=cantidad, caja=caja, caja_tecnico_id=caja_tecnico_id))
+        key = nombre.lower()
+        actual = por_nombre.get(key)
+
+        if actual:
+            cant_actual = float(actual.cantidad or 0)
+            caja_actual = actual.caja or 'Caja 1'
+            cambio = (cant_actual != cantidad) or (caja_actual != caja)
+            if not cambio:
+                continue
+
+            actual.cantidad = cantidad
+            actual.caja = caja
+            if caja_tecnico_id is not None:
+                actual.caja_tecnico_id = caja_tecnico_id
+
+            db.session.add(ArmadoCajaMovimiento(
+                armado_id=id_armado,
+                tipo="material",
+                item_id=actual.id_material,
+                nombre_item=actual.nombre,
+                caja=actual.caja or "Caja 1",
+                cantidad=actual.cantidad or 0,
+                tecnico_id=actual.caja_tecnico_id
+            ))
+            cambios += 1
+            continue
+
+        nuevo = ArmadoMaterial(
+            armado_id=id_armado,
+            nombre=nombre,
+            cantidad=cantidad,
+            caja=caja,
+            caja_tecnico_id=caja_tecnico_id
+        )
+        db.session.add(nuevo)
+        db.session.flush()
+
         db.session.add(ArmadoCajaMovimiento(
             armado_id=id_armado,
             tipo="material",
-            item_id=0,
-            nombre_item=nombre,
-            caja=caja,
-            cantidad=cantidad,
-            tecnico_id=caja_tecnico_id
+            item_id=nuevo.id_material,
+            nombre_item=nuevo.nombre,
+            caja=nuevo.caja or "Caja 1",
+            cantidad=nuevo.cantidad or 0,
+            tecnico_id=nuevo.caja_tecnico_id
         ))
-    if nuevos:
-        db.session.add_all(nuevos)
+        por_nombre[key] = nuevo
+        cambios += 1
+
     db.session.commit()
-    # actualizar item_id en movimientos de material recién creados
-    materiales_guardados = ArmadoMaterial.query.filter_by(armado_id=id_armado).all()
-    nombre_a_id = {m.nombre: m.id_material for m in materiales_guardados}
-    movimientos = ArmadoCajaMovimiento.query.filter_by(armado_id=id_armado, tipo="material", item_id=0).all()
-    for mov in movimientos:
-        mov.item_id = nombre_a_id.get(mov.nombre_item, 0)
-    db.session.commit()
-    return jsonify({"message": "Materiales actualizados", "count": len(nuevos)}), 200
+    return jsonify({"message": "Materiales actualizados", "count": cambios}), 200
 
 
 @armados_blueprint.route('/<int:id_armado>/movimientos', methods=['GET'])
