@@ -427,6 +427,7 @@ class ArmadoCajaMovimiento(db.Model):
     tipo = db.Column(db.String(20), nullable=False)  # 'material' | 'equipo'
     item_id = db.Column(db.Integer, nullable=False)
     nombre_item = db.Column(db.String(200), nullable=False)
+    numero_serie = db.Column(db.String(60), nullable=True)
     caja = db.Column(db.String(50), nullable=False)
     cantidad = db.Column(db.Numeric(10, 2), default=0)
     tecnico_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)

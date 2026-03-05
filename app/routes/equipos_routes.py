@@ -70,6 +70,7 @@ def crear_equipo():
                 tipo="equipo",
                 item_id=0,  # aún no tenemos id, lo llenamos tras flush
                 nombre_item=data.get('nombre'),
+                numero_serie=nuevo_equipo.numero_serie,
                 caja=nuevo_equipo.caja or "Caja 1",
                 cantidad=1,
                 tecnico_id=data.get('caja_tecnico_id')
@@ -108,6 +109,7 @@ def actualizar_equipo(id_equipo):
                 tipo="equipo",
                 item_id=equipo.id_equipo,
                 nombre_item=equipo.nombre,
+                numero_serie=equipo.numero_serie,
                 caja=equipo.caja or "Caja 1",
                 cantidad=1,
                 tecnico_id=equipo.caja_tecnico_id

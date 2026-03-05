@@ -3,6 +3,7 @@ from ..models import Armado, ArmadoParticipacion, ArmadoMaterial, Centro, User, 
 from ..models import ArmadoCajaMovimiento
 from ..database import db
 from datetime import datetime
+from sqlalchemy import and_
 
 armados_blueprint = Blueprint('armados', __name__)
 
@@ -211,6 +212,7 @@ def listar_movimientos_recientes():
 
     armado_id = request.args.get('armado_id', type=int)
     centro_id = request.args.get('centro_id', type=int)
+    numero_serie = (request.args.get('numero_serie') or '').strip()
 
     base_query = ArmadoCajaMovimiento.query.filter(ArmadoCajaMovimiento.cantidad != 0)  # solo cambios reales
     if armado_id:
@@ -218,6 +220,18 @@ def listar_movimientos_recientes():
     if centro_id:
         base_query = base_query.join(Armado, Armado.id_armado == ArmadoCajaMovimiento.armado_id)\
                                .filter(Armado.centro_id == centro_id)
+    if numero_serie:
+        base_query = (
+            base_query
+            .join(
+                EquiposIP,
+                and_(
+                    ArmadoCajaMovimiento.tipo == "equipo",
+                    EquiposIP.id_equipo == ArmadoCajaMovimiento.item_id,
+                ),
+            )
+            .filter(EquiposIP.numero_serie.ilike(f"%{numero_serie}%"))
+        )
     total = base_query.count()
     movs = (
         base_query
@@ -240,6 +254,7 @@ def listar_movimientos_recientes():
             "tipo": m.tipo,
             "item_id": m.item_id,
             "nombre_item": m.nombre_item,
+            "numero_serie": m.numero_serie,
             "caja": m.caja,
             "cantidad": float(m.cantidad or 0),
             "tecnico_id": m.tecnico_id,

@@ -1,6 +1,7 @@
 import os
 from flask import Flask
 from flask_cors import CORS
+from sqlalchemy import text
 from .config import Config
 from .database import db
 from flask import send_from_directory
@@ -114,5 +115,15 @@ def create_app():
 
     with app.app_context():
         db.create_all()
+        # Compat de esquema: snapshot de numero_serie por movimiento de caja.
+        db.session.execute(
+            text(
+                """
+                ALTER TABLE armado_caja_movimientos
+                ADD COLUMN IF NOT EXISTS numero_serie VARCHAR(60)
+                """
+            )
+        )
+        db.session.commit()
 
     return app
