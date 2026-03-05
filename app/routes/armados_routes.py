@@ -3,8 +3,17 @@ from ..models import Armado, ArmadoParticipacion, ArmadoMaterial, Centro, User, 
 from ..models import ArmadoCajaMovimiento
 from ..database import db
 from datetime import datetime
+import unicodedata
 
 armados_blueprint = Blueprint('armados', __name__)
+
+
+def normalizar_texto(valor):
+    texto = (valor or "").strip().lower()
+    if not texto:
+        return ""
+    texto = unicodedata.normalize("NFD", texto)
+    return "".join(ch for ch in texto if unicodedata.category(ch) != "Mn")
 
 
 def parse_date(value):
@@ -146,11 +155,7 @@ def guardar_materiales(id_armado):
 
     Armado.query.get_or_404(id_armado)
     existentes = ArmadoMaterial.query.filter_by(armado_id=id_armado).all()
-    por_nombre = {
-        (m.nombre or "").strip().lower(): m
-        for m in existentes
-        if (m.nombre or "").strip()
-    }
+    por_nombre = {normalizar_texto(m.nombre): m for m in existentes if normalizar_texto(m.nombre)}
     cambios = 0
 
     for item in payload:
@@ -158,11 +163,23 @@ def guardar_materiales(id_armado):
         if not nombre:
             continue
 
+        id_material = item.get("id_material")
         cantidad = float(item.get("cantidad") or 0)
         caja = item.get("caja") or 'Caja 1'
         caja_tecnico_id = item.get("caja_tecnico_id")
-        key = nombre.lower()
-        actual = por_nombre.get(key)
+        key = normalizar_texto(nombre)
+        actual = None
+
+        # Prioridad: actualizar por ID cuando venga en payload (evita cruces por nombre/acentos).
+        if id_material is not None:
+            try:
+                id_num = int(id_material)
+                actual = next((m for m in existentes if m.id_material == id_num), None)
+            except (TypeError, ValueError):
+                actual = None
+
+        if actual is None:
+            actual = por_nombre.get(key)
 
         if actual:
             cant_actual = float(actual.cantidad or 0)
