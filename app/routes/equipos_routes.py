@@ -1,5 +1,6 @@
 from flask import Blueprint, request, jsonify
 from ..models import EquiposIP, Centro, db, Armado, ArmadoCajaMovimiento
+from ..socketio_ext import emit_armado_event
 from datetime import datetime
 
 equipos_bp = Blueprint('equipos', __name__)
@@ -82,6 +83,12 @@ def crear_equipo():
             if mov and mov.item_id == 0:
                 mov.item_id = nuevo_equipo.id_equipo
                 db.session.commit()
+            emit_armado_event("armado_updated", {
+                "armado_id": armado_id,
+                "tipo": "equipo",
+                "item_id": nuevo_equipo.id_equipo,
+                "ts": datetime.utcnow().isoformat()
+            })
         return jsonify({"message": "Equipo creado con éxito", "equipo": nuevo_equipo.id_equipo}), 201
     except Exception as e:
         db.session.rollback()
@@ -115,7 +122,14 @@ def actualizar_equipo(id_equipo):
                 tecnico_id=equipo.caja_tecnico_id
             ))
         db.session.commit()
-        return jsonify({"message": "Equipo actualizado con éxito"}), 200
+        if armado_id:
+            emit_armado_event("armado_updated", {
+                "armado_id": armado_id,
+                "tipo": "equipo",
+                "item_id": equipo.id_equipo,
+                "ts": datetime.utcnow().isoformat()
+            })
+        return jsonify({"message": "Equipo actualizado con exito"}), 200
     except Exception as e:
         db.session.rollback()
         return jsonify({"error": str(e)}), 400

@@ -2,6 +2,7 @@ from flask import Blueprint, request, jsonify
 from ..models import Armado, ArmadoParticipacion, ArmadoMaterial, Centro, User, EquiposIP
 from ..models import ArmadoCajaMovimiento
 from ..database import db
+from ..socketio_ext import emit_armado_event
 from datetime import datetime
 import unicodedata
 
@@ -23,6 +24,13 @@ def parse_date(value):
         return datetime.strptime(value, "%Y-%m-%d").date()
     except ValueError:
         return None
+
+
+def emitir_actualizacion_armado(armado_id, tipo="armado"):
+    emit_armado_event(
+        "armado_updated",
+        {"armado_id": armado_id, "tipo": tipo, "ts": datetime.utcnow().isoformat()},
+    )
 
 
 @armados_blueprint.route('/', methods=['GET'])
@@ -112,6 +120,7 @@ def crear_armado():
     )
     db.session.add(participacion)
     db.session.commit()
+    emitir_actualizacion_armado(nuevo.id_armado, "armado")
     return jsonify({"message": "Armado creado", "id_armado": nuevo.id_armado}), 201
 
 
@@ -134,6 +143,7 @@ def actualizar_armado(id_armado):
             armado.total_cajas_manual = armado.total_cajas_manual
 
     db.session.commit()
+    emitir_actualizacion_armado(armado.id_armado, "armado")
     return jsonify({"message": "Armado actualizado"}), 200
 
 
@@ -235,6 +245,8 @@ def guardar_materiales(id_armado):
         cambios += 1
 
     db.session.commit()
+    if cambios:
+        emitir_actualizacion_armado(id_armado, "material")
     return jsonify({"message": "Materiales actualizados", "count": cambios}), 200
 
 

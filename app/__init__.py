@@ -5,6 +5,7 @@ from sqlalchemy import text
 from .config import Config
 from .database import db
 from flask import send_from_directory
+from .socketio_ext import socketio
 
 from .routes.status_routes import status_blueprint
 
@@ -69,6 +70,7 @@ def create_app():
     CORS(app, resources={r"/api/*": {"origins": "*"}})
 
     db.init_app(app)
+    socketio.init_app(app, cors_allowed_origins="*")
 
     # Registrar rutas
     app.register_blueprint(user_blueprint, url_prefix='/api/users')
