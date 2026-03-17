@@ -1,25 +1,13 @@
-import psycopg2
+from app import create_app
+from app.socketio_ext import socketio
 
-def test_connection():
-    try:
-        conn = psycopg2.connect(
-            host='179.57.170.61',
-            port='24301',
-            database='bdorcagest',
-            user='orca',
-            password='estadoscam.'
-        )
-        cursor = conn.cursor()
-        cursor.execute('SELECT 1')
-        print("Conexión exitosa a la base de datos.")
-        cursor.close()
-        conn.close()
-    except Exception as e:
-        print(f"Error al conectar con la base de datos: {e}")
 
-if __name__ == '__main__':
-    test_connection()  # Primero prueba la conexión a la base de datos
-    from app import create_app  # Importa la aplicación después de probar la conexión
+app = create_app()
 
-    app = create_app()
-    app.run(debug=True)  # Activa el modo debug y ejecuta la aplicación
+
+if __name__ == "__main__":
+    host = "0.0.0.0"
+    port = 5000
+    print(f"[backend] iniciando en http://{host}:{port}")
+    # log_output fuerza trazas de requests cuando usa eventlet/gevent.
+    socketio.run(app, host=host, port=port, debug=False, log_output=True)

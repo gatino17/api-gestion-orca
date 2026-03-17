@@ -2,6 +2,7 @@ from flask import Blueprint, request, jsonify
 from werkzeug.security import check_password_hash
 import jwt
 import datetime
+from sqlalchemy import func
 from ..models import User
 from ..database import db
 
@@ -12,10 +13,13 @@ SECRET_KEY = "remoto753524"  # Cambia esto por una clave más segura
 @auth_blueprint.route('/login', methods=['POST'])
 def login():
     data = request.get_json()
-    email = data.get('email')
-    password = data.get('password')
+    email = (data.get('email') or '').strip()
+    password = data.get('password') or ''
 
-    user = User.query.filter_by(email=email).first()
+    if not email or not password:
+        return jsonify({'message': 'Invalid email or password'}), 401
+
+    user = User.query.filter(func.lower(User.email) == email.lower()).first()
     if not user or not check_password_hash(user.password_hash, password):
         return jsonify({'message': 'Invalid email or password'}), 401
 

@@ -392,10 +392,40 @@ def actualizar_participacion(id_participacion):
 def eliminar_participacion(id_participacion):
     participacion = ArmadoParticipacion.query.get_or_404(id_participacion)
     armado = participacion.armado
+    force = str(request.args.get("force", "")).lower() in ("1", "true", "si", "yes")
+
+    # Regla de seguridad: solo permitir borrar participación si ese técnico
+    # no registró movimientos en la planilla.
+    if not force:
+        tiene_movimientos = (
+            ArmadoCajaMovimiento.query.filter(
+                ArmadoCajaMovimiento.armado_id == participacion.armado_id,
+                ArmadoCajaMovimiento.tecnico_id == participacion.tecnico_id
+            ).first()
+            is not None
+        )
+        if tiene_movimientos:
+            return jsonify({
+                "message": "No se puede eliminar: este técnico ya registró cambios en la planilla."
+            }), 409
 
     db.session.delete(participacion)
 
-    # Si el técnico activo coincide y hay otro historial, usar el más reciente; si no, dejar null
+    # Si era la última participación, eliminar el armado completo.
+    restantes = (
+        ArmadoParticipacion.query.filter(
+            ArmadoParticipacion.armado_id == participacion.armado_id,
+            ArmadoParticipacion.id_participacion != participacion.id_participacion
+        ).count()
+    )
+    if restantes == 0 and armado:
+        db.session.delete(armado)
+        db.session.commit()
+        emitir_actualizacion_armado(participacion.armado_id, "armado")
+        return jsonify({"message": "Participación y armado eliminados"}), 200
+
+    # Si el técnico activo coincide y hay otro historial, usar el más reciente.
+    # Si no hay otro historial, conservar el técnico actual para no violar NOT NULL.
     if armado and armado.tecnico_id == participacion.tecnico_id:
         ultimo = (
             ArmadoParticipacion.query.filter(
@@ -405,7 +435,9 @@ def eliminar_participacion(id_participacion):
             .order_by(ArmadoParticipacion.fecha_inicio.desc(), ArmadoParticipacion.id_participacion.desc())
             .first()
         )
-        armado.tecnico_id = ultimo.tecnico_id if ultimo else None
+        if ultimo:
+            armado.tecnico_id = ultimo.tecnico_id
 
     db.session.commit()
+    emitir_actualizacion_armado(participacion.armado_id, "armado")
     return jsonify({"message": "Participación eliminada"}), 200

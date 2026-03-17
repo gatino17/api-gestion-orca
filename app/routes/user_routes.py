@@ -57,6 +57,9 @@ def update_user(user_id):
     user.name = data.get('name', user.name)
     user.email = data.get('email', user.email)
     user.rol = data.get('rol', user.rol)
+    password = data.get('password')
+    if isinstance(password, str) and password.strip():
+        user.password_hash = generate_password_hash(password.strip())
 
     db.session.commit()
     print("Usuario después de la actualización:", user.name, user.email, user.rol)
