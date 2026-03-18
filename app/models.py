@@ -359,6 +359,30 @@ class Soporte(db.Model):
         )
 
 
+class MantencionPreventivaRevision(db.Model):
+    __tablename__ = 'mantencion_preventiva_revisiones'
+
+    id_revision = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    centro_id = db.Column(db.BigInteger, db.ForeignKey('centros.id_centro'), nullable=False, index=True)
+    anio = db.Column(db.Integer, nullable=False, index=True)
+    mes = db.Column(db.Integer, nullable=False, index=True)
+    datos_base_json = db.Column(db.Text, nullable=False, default='{}')
+    estados_json = db.Column(db.Text, nullable=False, default='{}')
+    observacion = db.Column(db.Text, nullable=True)
+    fecha_revision = db.Column(db.Date, nullable=True)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    centro = db.relationship(
+        'Centro',
+        backref=db.backref('mantenciones_preventivas', cascade="all, delete-orphan")
+    )
+
+    __table_args__ = (
+        db.UniqueConstraint('centro_id', 'anio', 'mes', name='uq_preventiva_centro_periodo'),
+    )
+
+
 # Tabla Armados técnicos
 class Armado(db.Model):
     __tablename__ = 'armados'

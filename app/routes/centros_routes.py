@@ -1,6 +1,6 @@
 from datetime import datetime, date
 from flask import Blueprint, request, jsonify
-from sqlalchemy import asc, desc
+from sqlalchemy import asc, desc, func
 from ..models import Centro,  Cliente, RazonSocial, EquiposIP, ConexionesEspeciales, InstalacionNueva, User
 from ..database import db
 
@@ -226,11 +226,21 @@ def eliminar_centro(id_centro):
 # Ruta para buscar detalle un centro equipos y team any
 @centros_blueprint.route('/detalles', methods=['GET'])
 def obtener_detalles_centro():
-    nombre_centro = request.args.get('nombre')
-    if not nombre_centro:
-        return jsonify({"error": "Nombre del centro es requerido"}), 400
+    centro_id = request.args.get('centro_id', type=int)
+    nombre_centro = request.args.get('nombre', type=str)
 
-    centro = Centro.query.filter(Centro.nombre.ilike(f'%{nombre_centro}%')).first()
+    if not centro_id and not nombre_centro:
+        return jsonify({"error": "Centro (id o nombre) es requerido"}), 400
+
+    centro = None
+    if centro_id:
+        centro = Centro.query.get(centro_id)
+    elif nombre_centro:
+        nombre_limpio = nombre_centro.strip()
+        centro = Centro.query.filter(func.lower(Centro.nombre) == nombre_limpio.lower()).first()
+        if not centro:
+            centro = Centro.query.filter(Centro.nombre.ilike(f'%{nombre_limpio}%')).first()
+
     if not centro:
         return jsonify({"error": "Centro no encontrado"}), 404
 

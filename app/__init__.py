@@ -26,6 +26,7 @@ from .routes.ceses_routes import ceses_blueprint
 from .routes.inventarios_routes import inventarios_blueprint
 from .routes.traslados_routes import traslados_blueprint
 from .routes.mantenciones_routes import mantenciones_blueprint
+from .routes.mantencion_preventiva_routes import mantencion_preventiva_blueprint
 from .routes.levantamientos_routes import levantamientos_blueprint
 from .routes.instalaciones_routes import instalaciones_blueprint
 from .routes.servicios_adicionales_routes import servicios_blueprint
@@ -94,6 +95,7 @@ def create_app():
     app.register_blueprint(inventarios_blueprint, url_prefix='/api/inventarios') 
     app.register_blueprint(traslados_blueprint, url_prefix='/api/traslados')
     app.register_blueprint(mantenciones_blueprint, url_prefix='/api/mantenciones')
+    app.register_blueprint(mantencion_preventiva_blueprint, url_prefix='/api/mantencion_preventiva')
     app.register_blueprint(levantamientos_blueprint, url_prefix='/api/levantamientos')
     app.register_blueprint(instalaciones_blueprint, url_prefix='/api/instalaciones')
     app.register_blueprint(servicios_blueprint, url_prefix='/api/servicios_adicionales')
