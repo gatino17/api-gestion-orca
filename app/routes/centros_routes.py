@@ -106,6 +106,7 @@ def get_centros():
         'base_tierra': "Sí" if centro.base_tierra else "No",
         'respaldo_adicional': "Sí" if centro.respaldo_adicional else "No",
         'valor_contrato': str(centro.valor_contrato),
+        'es_central': bool(centro.es_central),
         'created_at': centro.created_at
     } for centro in centros]
 
@@ -147,7 +148,8 @@ def crear_centro():
             base_tierra=data.get('base_tierra'),
             respaldo_adicional=data.get('respaldo_adicional'),
             valor_contrato=data.get('valor_contrato'),
-            estado=data.get('estado', 'activo')  # Por defecto es 'activo'
+            estado=data.get('estado', 'activo'),  # Por defecto es 'activo'
+            es_central=bool(data.get('es_central', False))
         )
 
         db.session.add(nuevo_centro)
@@ -197,6 +199,8 @@ def actualizar_centro(id_centro):
         centro.respaldo_adicional = data.get('respaldo_adicional', centro.respaldo_adicional)
         centro.valor_contrato = data.get('valor_contrato', centro.valor_contrato)
         centro.estado = data.get('estado', centro.estado)
+        if 'es_central' in data:
+            centro.es_central = bool(data.get('es_central'))
 
         # Guardado en la base de datos
         db.session.commit()
@@ -254,6 +258,7 @@ def obtener_detalles_centro():
         "nombre_ponton": centro.nombre_ponton,
         "cliente": centro.cliente.nombre if centro.cliente else None,
         "estado": centro.estado,
+        "es_central": bool(centro.es_central),
         "equipos": [
             {
                 "id_equipo": equipo.id_equipo,

@@ -136,6 +136,23 @@ def create_app():
                 """
             )
         )
+        db.session.execute(
+            text(
+                """
+                ALTER TABLE centros
+                ADD COLUMN IF NOT EXISTS es_central BOOLEAN DEFAULT FALSE
+                """
+            )
+        )
+        db.session.execute(
+            text(
+                """
+                UPDATE centros
+                SET es_central = FALSE
+                WHERE es_central IS NULL
+                """
+            )
+        )
         db.session.commit()
 
     return app

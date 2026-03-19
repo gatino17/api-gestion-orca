@@ -71,6 +71,7 @@ class Centro(db.Model):
     respaldo_adicional = db.Column(db.Boolean, nullable=True)  # Indica si el centro tiene respaldo adicional
     valor_contrato = db.Column(db.Numeric(10, 2), nullable=True)  # Valor del contrato, almacenado con dos decimales
     estado = db.Column(db.String(10), default='activo')  # Estado del centro ('activo', 'traslado', 'cese', 'retirado')
+    es_central = db.Column(db.Boolean, nullable=False, default=False)  # Marca centros tipo central
 
     # Relación con otras tablas (opcional, para facilitar consultas)
     cliente = db.relationship('Cliente', backref='centros', lazy='joined')
