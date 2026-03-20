@@ -36,6 +36,7 @@ from .routes.actas_routes import actas_blueprint
 from .routes.soporte_routes import soporte_blueprint
 from .routes.consultascentro_historial_routes import consultascentro_historial_bp
 from .routes.armados_routes import armados_blueprint
+from .routes.actas_entrega_routes import actas_entrega_blueprint
 
 
 
@@ -106,6 +107,7 @@ def create_app():
     app.register_blueprint(soporte_blueprint, url_prefix='/api/soporte')
     app.register_blueprint(consultascentro_historial_bp, url_prefix='/api/consultas_centro')
     app.register_blueprint(armados_blueprint, url_prefix='/api/armados')
+    app.register_blueprint(actas_entrega_blueprint, url_prefix='/api/actas_entrega')
       
     
   # Ruta para servir archivos desde la carpeta `uploads`
@@ -150,6 +152,30 @@ def create_app():
                 UPDATE centros
                 SET es_central = FALSE
                 WHERE es_central IS NULL
+                """
+            )
+        )
+        db.session.execute(
+            text(
+                """
+                ALTER TABLE actas_entrega
+                ADD COLUMN IF NOT EXISTS firma_tecnico_1 VARCHAR(255)
+                """
+            )
+        )
+        db.session.execute(
+            text(
+                """
+                ALTER TABLE actas_entrega
+                ADD COLUMN IF NOT EXISTS firma_tecnico_2 VARCHAR(255)
+                """
+            )
+        )
+        db.session.execute(
+            text(
+                """
+                ALTER TABLE actas_entrega
+                ADD COLUMN IF NOT EXISTS firma_recepciona VARCHAR(255)
                 """
             )
         )

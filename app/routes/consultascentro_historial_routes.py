@@ -37,7 +37,12 @@ def obtener_centros_por_cliente(cliente_id):
             {
                 "id_centro": centro.id_centro,
                 "nombre": centro.nombre,
+                "cliente_id": centro.cliente_id,
                 "ubicacion": centro.ubicacion,
+                "localidad": centro.ubicacion,
+                "direccion": centro.ubicacion,
+                "area": centro.area,
+                "region": centro.area,
                 "nombre_ponton": centro.nombre_ponton,
                 "estado": centro.estado
             } for centro in centros

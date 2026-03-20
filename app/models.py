@@ -384,6 +384,30 @@ class MantencionPreventivaRevision(db.Model):
     )
 
 
+class ActaEntrega(db.Model):
+    __tablename__ = 'actas_entrega'
+
+    id_acta_entrega = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    centro_id = db.Column(db.BigInteger, db.ForeignKey('centros.id_centro', ondelete="CASCADE"), nullable=False, index=True)
+    fecha_registro = db.Column(db.Date, nullable=False, index=True)
+    region = db.Column(db.String(120), nullable=True)
+    localidad = db.Column(db.String(120), nullable=True)
+    tecnico_1 = db.Column(db.String(120), nullable=True)
+    firma_tecnico_1 = db.Column(db.String(255), nullable=True)
+    tecnico_2 = db.Column(db.String(120), nullable=True)
+    firma_tecnico_2 = db.Column(db.String(255), nullable=True)
+    recepciona_nombre = db.Column(db.String(120), nullable=True)
+    firma_recepciona = db.Column(db.String(255), nullable=True)
+    equipos_considerados = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    centro = db.relationship('Centro', backref=db.backref('actas_entrega', cascade="all, delete-orphan"))
+
+    def __repr__(self):
+        return f"<ActaEntrega(id_acta_entrega={self.id_acta_entrega}, centro_id={self.centro_id}, fecha_registro={self.fecha_registro})>"
+
+
 # Tabla Armados técnicos
 class Armado(db.Model):
     __tablename__ = 'armados'
