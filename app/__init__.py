@@ -179,6 +179,31 @@ def create_app():
                 """
             )
         )
+        # Firmas en base64 pueden superar 255 caracteres; asegurar columnas tipo TEXT.
+        db.session.execute(
+            text(
+                """
+                ALTER TABLE actas_entrega
+                ALTER COLUMN firma_tecnico_1 TYPE TEXT
+                """
+            )
+        )
+        db.session.execute(
+            text(
+                """
+                ALTER TABLE actas_entrega
+                ALTER COLUMN firma_tecnico_2 TYPE TEXT
+                """
+            )
+        )
+        db.session.execute(
+            text(
+                """
+                ALTER TABLE actas_entrega
+                ALTER COLUMN firma_recepciona TYPE TEXT
+                """
+            )
+        )
         db.session.commit()
 
     return app
