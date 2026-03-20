@@ -1,7 +1,7 @@
 from datetime import datetime, date
 from flask import Blueprint, request, jsonify
 from sqlalchemy import asc, desc, func
-from ..models import Centro,  Cliente, RazonSocial, EquiposIP, ConexionesEspeciales, InstalacionNueva, User
+from ..models import Centro,  Cliente, RazonSocial, EquiposIP, ConexionesEspeciales, InstalacionNueva, User, Cese
 from ..database import db
 
 centros_blueprint = Blueprint('centros', __name__)
@@ -42,6 +42,45 @@ def _sincronizar_instalacion(centro_id, fecha):
         )
         db.session.add(nueva)
     db.session.commit()
+
+
+def _registrar_cese_automatico(centro, data, estado_anterior):
+    estado_nuevo = (data.get('estado', centro.estado) or '').strip().lower()
+    if estado_nuevo != 'cese':
+        return
+
+    # Prioriza fecha_cese explicita, luego fecha_termino, y finalmente hoy.
+    fecha_cese = (
+        _parse_date(data.get('fecha_cese'))
+        or _parse_date(data.get('fecha_termino'))
+        or centro.fecha_termino
+        or date.today()
+    )
+
+    ultimo_cese = (
+        Cese.query.filter_by(centro_id=centro.id_centro)
+        .order_by(Cese.fecha_cese.desc(), Cese.id_cese.desc())
+        .first()
+    )
+    era_cese = (estado_anterior or '').strip().lower() == 'cese'
+
+    # Si ya estaba en cese y existe registro, solo actualiza la fecha cuando cambia.
+    if era_cese and ultimo_cese:
+        if ultimo_cese.fecha_cese != fecha_cese:
+            ultimo_cese.fecha_cese = fecha_cese
+        return
+
+    # Si no estaba en cese, evita duplicado exacto.
+    if ultimo_cese and ultimo_cese.fecha_cese == fecha_cese:
+        return
+
+    db.session.add(
+        Cese(
+            centro_id=centro.id_centro,
+            fecha_cese=fecha_cese,
+            documento_cese=None
+        )
+    )
 
 # Ruta para obtener todos los centros
 @centros_blueprint.route('/', methods=['GET'])
@@ -170,6 +209,7 @@ def actualizar_centro(id_centro):
 
     # Validacion de cliente_id y razon_social_id
     try:
+        estado_anterior = centro.estado
         if data.get('cliente_id'):
             cliente_existente = Cliente.query.get(data['cliente_id'])
             if not cliente_existente:
@@ -192,7 +232,8 @@ def actualizar_centro(id_centro):
         nueva_fecha_instalacion = _parse_date(data.get('fecha_instalacion'))
         centro.fecha_instalacion = nueva_fecha_instalacion or centro.fecha_instalacion
         centro.fecha_activacion = _parse_date(data.get('fecha_activacion')) or centro.fecha_activacion
-        centro.fecha_termino = _parse_date(data.get('fecha_termino')) or centro.fecha_termino
+        fecha_cese_form = _parse_date(data.get('fecha_cese'))
+        centro.fecha_termino = fecha_cese_form or _parse_date(data.get('fecha_termino')) or centro.fecha_termino
         centro.cantidad_radares = data.get('cantidad_radares', centro.cantidad_radares)
         centro.cantidad_camaras = data.get('cantidad_camaras', centro.cantidad_camaras)
         centro.base_tierra = data.get('base_tierra', centro.base_tierra)
@@ -201,6 +242,8 @@ def actualizar_centro(id_centro):
         centro.estado = data.get('estado', centro.estado)
         if 'es_central' in data:
             centro.es_central = bool(data.get('es_central'))
+
+        _registrar_cese_automatico(centro, data, estado_anterior)
 
         # Guardado en la base de datos
         db.session.commit()
