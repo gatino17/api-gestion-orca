@@ -1,8 +1,20 @@
+from datetime import datetime
+
 from flask import Blueprint, request, jsonify
 from ..models import Soporte, Centro
 from ..database import db
 
 soporte_blueprint = Blueprint('soporte', __name__)
+
+
+def _parse_date(value):
+    if value in (None, ""):
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if hasattr(value, "year") and hasattr(value, "month") and hasattr(value, "day"):
+        return value
+    return datetime.strptime(str(value), "%Y-%m-%d").date()
 
 # Crear un nuevo registro de soporte
 @soporte_blueprint.route('/', methods=['POST'])
@@ -13,13 +25,13 @@ def crear_soporte():
         centro_id=data.get('centro_id'),
         problema=data.get('problema'),
         tipo=data.get('tipo'),  # "terreno" o "remoto"
-        fecha_soporte=data.get('fecha_soporte'),
+        fecha_soporte=_parse_date(data.get('fecha_soporte')),
         solucion=data.get('solucion'),
         categoria_falla=data.get('categoria_falla'),
         cambio_equipo=data.get('cambio_equipo', False),
         equipo_cambiado=data.get('equipo_cambiado'),
         estado=data.get('estado', 'pendiente'),
-        fecha_cierre=data.get('fecha_cierre')
+        fecha_cierre=_parse_date(data.get('fecha_cierre'))
     )
 
     db.session.add(nuevo_soporte)
@@ -42,13 +54,13 @@ def obtener_soportes():
             },
             "problema": soporte.problema,
             "tipo": soporte.tipo,
-            "fecha_soporte": soporte.fecha_soporte,
+            "fecha_soporte": soporte.fecha_soporte.isoformat() if soporte.fecha_soporte else None,
             "solucion": soporte.solucion,
             "categoria_falla": soporte.categoria_falla,
             "cambio_equipo": soporte.cambio_equipo,
             "equipo_cambiado": soporte.equipo_cambiado,
             "estado": soporte.estado,
-            "fecha_cierre": soporte.fecha_cierre
+            "fecha_cierre": soporte.fecha_cierre.isoformat() if soporte.fecha_cierre else None
         })
 
     return jsonify(resultado), 200
@@ -62,13 +74,15 @@ def actualizar_soporte(id_soporte):
     soporte.centro_id = data.get('centro_id', soporte.centro_id)
     soporte.problema = data.get('problema', soporte.problema)
     soporte.tipo = data.get('tipo', soporte.tipo)
-    soporte.fecha_soporte = data.get('fecha_soporte', soporte.fecha_soporte)
+    if 'fecha_soporte' in data:
+        soporte.fecha_soporte = _parse_date(data.get('fecha_soporte'))
     soporte.solucion = data.get('solucion', soporte.solucion)
     soporte.categoria_falla = data.get('categoria_falla', soporte.categoria_falla)
     soporte.cambio_equipo = data.get('cambio_equipo', soporte.cambio_equipo)
     soporte.equipo_cambiado = data.get('equipo_cambiado', soporte.equipo_cambiado)
     soporte.estado = data.get('estado', soporte.estado)
-    soporte.fecha_cierre = data.get('fecha_cierre', soporte.fecha_cierre)
+    if 'fecha_cierre' in data:
+        soporte.fecha_cierre = _parse_date(data.get('fecha_cierre'))
 
     db.session.commit()
     return jsonify({"message": "Soporte actualizado exitosamente"}), 200
