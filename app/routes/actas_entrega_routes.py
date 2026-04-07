@@ -35,6 +35,7 @@ def _serialize_acta(acta):
         "recepciona_nombre": acta.recepciona_nombre,
         "firma_recepciona": acta.firma_recepciona,
         "equipos_considerados": acta.equipos_considerados,
+        "centro_origen_traslado": acta.centro_origen_traslado,
         "empresa": cliente_nombre,
         "cliente": cliente_nombre,
         "centro": centro.nombre if centro else None,
@@ -94,6 +95,7 @@ def crear_acta_entrega():
             recepciona_nombre=data.get("recepciona_nombre"),
             firma_recepciona=data.get("firma_recepciona"),
             equipos_considerados=data.get("equipos_considerados"),
+            centro_origen_traslado=data.get("centro_origen_traslado"),
         )
         db.session.add(acta)
         db.session.commit()
@@ -133,6 +135,7 @@ def actualizar_acta_entrega(id_acta_entrega):
             "recepciona_nombre",
             "firma_recepciona",
             "equipos_considerados",
+            "centro_origen_traslado",
         ]:
             if campo in data:
                 setattr(acta, campo, data.get(campo))

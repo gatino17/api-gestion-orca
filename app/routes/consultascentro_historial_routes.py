@@ -44,7 +44,11 @@ def obtener_centros_por_cliente(cliente_id):
                 "area": centro.area,
                 "region": centro.area,
                 "nombre_ponton": centro.nombre_ponton,
-                "estado": centro.estado
+                "estado": centro.estado,
+                "correo_centro": centro.correo_centro,
+                "telefono": centro.telefono,
+                "base_tierra": centro.base_tierra,
+                "cantidad_radares": centro.cantidad_radares
             } for centro in centros
         ]
         return jsonify(resultado), 200
