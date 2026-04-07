@@ -408,6 +408,35 @@ class ActaEntrega(db.Model):
         return f"<ActaEntrega(id_acta_entrega={self.id_acta_entrega}, centro_id={self.centro_id}, fecha_registro={self.fecha_registro})>"
 
 
+class PermisoTrabajo(db.Model):
+    __tablename__ = 'permisos_trabajo'
+
+    id_permiso_trabajo = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    centro_id = db.Column(db.BigInteger, db.ForeignKey('centros.id_centro', ondelete="CASCADE"), nullable=False, index=True)
+    acta_entrega_id = db.Column(db.Integer, db.ForeignKey('actas_entrega.id_acta_entrega', ondelete="SET NULL"), nullable=True, index=True)
+    fecha_ingreso = db.Column(db.Date, nullable=False, index=True)
+    fecha_salida = db.Column(db.Date, nullable=True, index=True)
+    correo_centro = db.Column(db.String(180), nullable=True)
+    region = db.Column(db.String(120), nullable=True)
+    localidad = db.Column(db.String(120), nullable=True)
+    tecnico_1 = db.Column(db.String(120), nullable=True)
+    tecnico_2 = db.Column(db.String(120), nullable=True)
+    recepciona_nombre = db.Column(db.String(120), nullable=True)
+    puntos_gps = db.Column(db.String(200), nullable=True)
+    descripcion_trabajo = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    centro = db.relationship('Centro', backref=db.backref('permisos_trabajo', cascade="all, delete-orphan"))
+    acta_entrega = db.relationship('ActaEntrega', backref=db.backref('permisos_trabajo', cascade="all, delete-orphan"))
+
+    def __repr__(self):
+        return (
+            f"<PermisoTrabajo(id_permiso_trabajo={self.id_permiso_trabajo}, centro_id={self.centro_id}, "
+            f"fecha_ingreso={self.fecha_ingreso}, fecha_salida={self.fecha_salida})>"
+        )
+
+
 # Tabla Armados técnicos
 class Armado(db.Model):
     __tablename__ = 'armados'
