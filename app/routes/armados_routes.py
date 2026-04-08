@@ -37,12 +37,15 @@ def emitir_actualizacion_armado(armado_id, tipo="armado"):
 def listar_armados():
     estado = request.args.get('estado')
     tecnico_id = request.args.get('tecnico_id')
+    centro_id = request.args.get('centro_id', type=int)
 
     query = Armado.query
     if estado:
         query = query.filter(Armado.estado == estado)
     if tecnico_id:
         query = query.filter(Armado.tecnico_id == tecnico_id)
+    if centro_id:
+        query = query.filter(Armado.centro_id == centro_id)
 
     armados = query.order_by(Armado.fecha_asignacion.desc()).all()
     resultado = []

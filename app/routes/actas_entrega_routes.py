@@ -2,7 +2,7 @@ from datetime import datetime
 from flask import Blueprint, request, jsonify
 
 from ..database import db
-from ..models import ActaEntrega, Centro
+from ..models import ActaEntrega, Armado, Centro
 
 
 actas_entrega_blueprint = Blueprint('actas_entrega', __name__)
@@ -25,6 +25,7 @@ def _serialize_acta(acta):
     return {
         "id_acta_entrega": acta.id_acta_entrega,
         "centro_id": acta.centro_id,
+        "armado_id": acta.armado_id,
         "fecha_registro": acta.fecha_registro.isoformat() if acta.fecha_registro else None,
         "region": acta.region,
         "localidad": acta.localidad,
@@ -82,9 +83,23 @@ def crear_acta_entrega():
         centro = Centro.query.get(centro_id)
         if not centro:
             return jsonify({"error": "Centro no encontrado"}), 404
+        armado_id = data.get("armado_id")
+        if armado_id in ("", None):
+            armado_id = None
+        if armado_id is not None:
+            try:
+                armado_id = int(armado_id)
+            except (TypeError, ValueError):
+                return jsonify({"error": "armado_id invalido"}), 400
+            armado = Armado.query.get(armado_id)
+            if not armado:
+                return jsonify({"error": "Armado no encontrado"}), 404
+            if int(armado.centro_id or 0) != int(centro_id):
+                return jsonify({"error": "El armado no pertenece al centro seleccionado"}), 400
 
         acta = ActaEntrega(
             centro_id=centro_id,
+            armado_id=armado_id,
             fecha_registro=fecha_registro,
             region=data.get("region"),
             localidad=data.get("localidad"),
@@ -118,6 +133,22 @@ def actualizar_acta_entrega(id_acta_entrega):
             if not centro:
                 return jsonify({"error": "Centro no encontrado"}), 404
             acta.centro_id = data.get("centro_id")
+
+        if "armado_id" in data:
+            armado_id = data.get("armado_id")
+            if armado_id in ("", None):
+                acta.armado_id = None
+            else:
+                try:
+                    armado_id = int(armado_id)
+                except (TypeError, ValueError):
+                    return jsonify({"error": "armado_id invalido"}), 400
+                armado = Armado.query.get(armado_id)
+                if not armado:
+                    return jsonify({"error": "Armado no encontrado"}), 404
+                if int(armado.centro_id or 0) != int(acta.centro_id or 0):
+                    return jsonify({"error": "El armado no pertenece al centro seleccionado"}), 400
+                acta.armado_id = armado_id
 
         if "fecha_registro" in data:
             fecha = _parse_date(data.get("fecha_registro"))

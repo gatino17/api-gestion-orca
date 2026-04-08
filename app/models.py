@@ -389,6 +389,7 @@ class ActaEntrega(db.Model):
 
     id_acta_entrega = db.Column(db.Integer, primary_key=True, autoincrement=True)
     centro_id = db.Column(db.BigInteger, db.ForeignKey('centros.id_centro', ondelete="CASCADE"), nullable=False, index=True)
+    armado_id = db.Column(db.Integer, db.ForeignKey('armados.id_armado', ondelete="SET NULL"), nullable=True, index=True)
     fecha_registro = db.Column(db.Date, nullable=False, index=True)
     region = db.Column(db.String(120), nullable=True)
     localidad = db.Column(db.String(120), nullable=True)
@@ -404,6 +405,7 @@ class ActaEntrega(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     centro = db.relationship('Centro', backref=db.backref('actas_entrega', cascade="all, delete-orphan"))
+    armado = db.relationship('Armado', backref='actas_entrega')
 
     def __repr__(self):
         return f"<ActaEntrega(id_acta_entrega={self.id_acta_entrega}, centro_id={self.centro_id}, fecha_registro={self.fecha_registro})>"
