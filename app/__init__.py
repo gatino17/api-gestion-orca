@@ -38,6 +38,7 @@ from .routes.consultascentro_historial_routes import consultascentro_historial_b
 from .routes.armados_routes import armados_blueprint
 from .routes.actas_entrega_routes import actas_entrega_blueprint
 from .routes.permisos_trabajo_routes import permisos_trabajo_blueprint
+from .routes.mantenciones_terreno_routes import mantenciones_terreno_blueprint
 
 
 
@@ -110,6 +111,7 @@ def create_app():
     app.register_blueprint(armados_blueprint, url_prefix='/api/armados')
     app.register_blueprint(actas_entrega_blueprint, url_prefix='/api/actas_entrega')
     app.register_blueprint(permisos_trabajo_blueprint, url_prefix='/api/permisos_trabajo')
+    app.register_blueprint(mantenciones_terreno_blueprint, url_prefix='/api/mantenciones_terreno')
       
     
   # Ruta para servir archivos desde la carpeta `uploads`
@@ -203,6 +205,38 @@ def create_app():
                 """
                 ALTER TABLE actas_entrega
                 ALTER COLUMN firma_recepciona TYPE TEXT
+                """
+            )
+        )
+        db.session.execute(
+            text(
+                """
+                ALTER TABLE permisos_trabajo
+                ADD COLUMN IF NOT EXISTS firma_tecnico_1 TEXT
+                """
+            )
+        )
+        db.session.execute(
+            text(
+                """
+                ALTER TABLE permisos_trabajo
+                ADD COLUMN IF NOT EXISTS firma_tecnico_2 TEXT
+                """
+            )
+        )
+        db.session.execute(
+            text(
+                """
+                ALTER TABLE mantenciones_terreno
+                ADD COLUMN IF NOT EXISTS responsabilidad VARCHAR(20)
+                """
+            )
+        )
+        db.session.execute(
+            text(
+                """
+                ALTER TABLE mantenciones_terreno
+                ADD COLUMN IF NOT EXISTS evidencia_foto TEXT
                 """
             )
         )

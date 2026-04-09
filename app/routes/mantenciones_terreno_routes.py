@@ -4,10 +4,10 @@ import re
 from flask import Blueprint, jsonify, request
 
 from ..database import db
-from ..models import ActaEntrega, Centro, PermisoTrabajo
+from ..models import Centro, MantencionTerreno
 
 
-permisos_trabajo_blueprint = Blueprint('permisos_trabajo', __name__)
+mantenciones_terreno_blueprint = Blueprint('mantenciones_terreno', __name__)
 
 
 def _parse_date(value):
@@ -19,46 +19,6 @@ def _parse_date(value):
         return datetime.strptime(str(value), '%Y-%m-%d').date()
     except (TypeError, ValueError):
         return None
-
-
-def _serialize_permiso(permiso):
-    centro = permiso.centro
-    acta = permiso.acta_entrega
-    cliente_nombre = centro.cliente.nombre if centro and centro.cliente else None
-    correo_centro = permiso.correo_centro or (centro.correo_centro if centro else None)
-    telefono_centro = permiso.telefono_centro or (centro.telefono if centro else None)
-    return {
-        "id_permiso_trabajo": permiso.id_permiso_trabajo,
-        "centro_id": permiso.centro_id,
-        "acta_entrega_id": permiso.acta_entrega_id,
-        "fecha_ingreso": permiso.fecha_ingreso.isoformat() if permiso.fecha_ingreso else None,
-        "fecha_salida": permiso.fecha_salida.isoformat() if permiso.fecha_salida else None,
-        "correo_centro": correo_centro,
-        "telefono_centro": telefono_centro,
-        "region": permiso.region,
-        "localidad": permiso.localidad,
-        "tecnico_1": permiso.tecnico_1,
-        "tecnico_2": permiso.tecnico_2,
-        "recepciona_nombre": permiso.recepciona_nombre,
-        "recepciona_rut": permiso.recepciona_rut,
-        "firma_tecnico_1": permiso.firma_tecnico_1 or (acta.firma_tecnico_1 if acta else None),
-        "firma_tecnico_2": permiso.firma_tecnico_2 or (acta.firma_tecnico_2 if acta else None),
-        "firma_recepciona": permiso.firma_recepciona,
-        "puntos_gps": permiso.puntos_gps,
-        "sellos": permiso.sellos,
-        "medicion_fase_neutro": permiso.medicion_fase_neutro,
-        "medicion_neutro_tierra": permiso.medicion_neutro_tierra,
-        "hertz": permiso.hertz,
-        "descripcion_trabajo": permiso.descripcion_trabajo,
-        "empresa": cliente_nombre,
-        "cliente": cliente_nombre,
-        "centro": centro.nombre if centro else None,
-        "codigo_ponton": centro.nombre_ponton if centro else None,
-        "base_tierra": centro.base_tierra if centro else None,
-        "cantidad_radares": centro.cantidad_radares if centro else None,
-        "created_at": permiso.created_at.isoformat() if permiso.created_at else None,
-        "updated_at": permiso.updated_at.isoformat() if permiso.updated_at else None,
-    }
 
 
 def _validate_numeric_measure(data, field_name):
@@ -112,33 +72,73 @@ def _parse_optional_int(value, field_name):
     return int(text)
 
 
-@permisos_trabajo_blueprint.route('/', methods=['GET'])
-def listar_permisos_trabajo():
+def _serialize_mantencion(item):
+    centro = item.centro
+    cliente_nombre = centro.cliente.nombre if centro and centro.cliente else None
+    correo_centro = item.correo_centro or (centro.correo_centro if centro else None)
+    telefono_centro = item.telefono_centro or (centro.telefono if centro else None)
+    return {
+        "id_mantencion_terreno": item.id_mantencion_terreno,
+        "centro_id": item.centro_id,
+        "fecha_ingreso": item.fecha_ingreso.isoformat() if item.fecha_ingreso else None,
+        "fecha_salida": item.fecha_salida.isoformat() if item.fecha_salida else None,
+        "correo_centro": correo_centro,
+        "telefono_centro": telefono_centro,
+        "region": item.region,
+        "localidad": item.localidad,
+        "responsabilidad": item.responsabilidad,
+        "tecnico_1": item.tecnico_1,
+        "firma_tecnico_1": item.firma_tecnico_1,
+        "tecnico_2": item.tecnico_2,
+        "firma_tecnico_2": item.firma_tecnico_2,
+        "recepciona_nombre": item.recepciona_nombre,
+        "recepciona_rut": item.recepciona_rut,
+        "firma_recepciona": item.firma_recepciona,
+        "puntos_gps": item.puntos_gps,
+        "sellos": item.sellos,
+        "medicion_fase_neutro": item.medicion_fase_neutro,
+        "medicion_neutro_tierra": item.medicion_neutro_tierra,
+        "hertz": item.hertz,
+        "descripcion_trabajo": item.descripcion_trabajo,
+        "evidencia_foto": item.evidencia_foto,
+        "empresa": cliente_nombre,
+        "cliente": cliente_nombre,
+        "centro": centro.nombre if centro else None,
+        "codigo_ponton": centro.nombre_ponton if centro else None,
+        "base_tierra": centro.base_tierra if centro else None,
+        "cantidad_radares": centro.cantidad_radares if centro else None,
+        "created_at": item.created_at.isoformat() if item.created_at else None,
+        "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+    }
+
+
+@mantenciones_terreno_blueprint.route('/', methods=['GET'])
+def listar_mantenciones_terreno():
     try:
         cliente_id = request.args.get('cliente_id', type=int)
         centro_id = request.args.get('centro_id', type=int)
         fecha_desde = _parse_date(request.args.get('fecha_desde'))
         fecha_hasta = _parse_date(request.args.get('fecha_hasta'))
 
-        query = PermisoTrabajo.query.join(Centro, Centro.id_centro == PermisoTrabajo.centro_id)
+        query = MantencionTerreno.query.join(Centro, Centro.id_centro == MantencionTerreno.centro_id)
 
         if cliente_id:
             query = query.filter(Centro.cliente_id == cliente_id)
         if centro_id:
-            query = query.filter(PermisoTrabajo.centro_id == centro_id)
+            query = query.filter(MantencionTerreno.centro_id == centro_id)
         if fecha_desde:
-            query = query.filter(PermisoTrabajo.fecha_ingreso >= fecha_desde)
+            query = query.filter(MantencionTerreno.fecha_ingreso >= fecha_desde)
         if fecha_hasta:
-            query = query.filter(PermisoTrabajo.fecha_ingreso <= fecha_hasta)
+            query = query.filter(MantencionTerreno.fecha_ingreso <= fecha_hasta)
 
-        registros = query.order_by(PermisoTrabajo.fecha_ingreso.desc(), PermisoTrabajo.id_permiso_trabajo.desc()).all()
-        return jsonify([_serialize_permiso(item) for item in registros]), 200
+        registros = query.order_by(MantencionTerreno.fecha_ingreso.desc(), MantencionTerreno.id_mantencion_terreno.desc()).all()
+        return jsonify([_serialize_mantencion(item) for item in registros]), 200
     except Exception as e:
-        return jsonify({"error": f"Error al listar permisos de trabajo: {str(e)}"}), 500
+        return jsonify({"error": f"Error al listar mantenciones en terreno: {str(e)}"}), 500
 
 
-@permisos_trabajo_blueprint.route('/', methods=['POST'])
-def crear_permiso_trabajo():
+@mantenciones_terreno_blueprint.route('/', methods=['POST'])
+def crear_mantencion_terreno():
     data = request.get_json() or {}
     try:
         centro_id = data.get("centro_id")
@@ -150,26 +150,20 @@ def crear_permiso_trabajo():
         if not centro:
             return jsonify({"error": "Centro no encontrado"}), 404
 
-        acta_entrega_id = data.get("acta_entrega_id")
-        if acta_entrega_id:
-            acta = ActaEntrega.query.get(acta_entrega_id)
-            if not acta:
-                return jsonify({"error": "Acta de entrega no encontrada"}), 404
-
         medicion_fase_neutro = _validate_numeric_measure(data, "medicion_fase_neutro")
         medicion_neutro_tierra = _validate_numeric_measure(data, "medicion_neutro_tierra")
         hertz = _validate_numeric_measure(data, "hertz")
         puntos_gps = _validate_gps_points(data.get("puntos_gps"))
 
-        permiso = PermisoTrabajo(
+        item = MantencionTerreno(
             centro_id=centro_id,
-            acta_entrega_id=acta_entrega_id,
             fecha_ingreso=fecha_ingreso,
             fecha_salida=_parse_date(data.get("fecha_salida")),
             correo_centro=data.get("correo_centro"),
             telefono_centro=data.get("telefono_centro"),
             region=data.get("region"),
             localidad=data.get("localidad"),
+            responsabilidad=data.get("responsabilidad"),
             tecnico_1=data.get("tecnico_1"),
             firma_tecnico_1=data.get("firma_tecnico_1"),
             tecnico_2=data.get("tecnico_2"),
@@ -183,9 +177,9 @@ def crear_permiso_trabajo():
             medicion_neutro_tierra=medicion_neutro_tierra,
             hertz=hertz,
             descripcion_trabajo=data.get("descripcion_trabajo"),
+            evidencia_foto=data.get("evidencia_foto"),
         )
 
-        # Si vienen datos desde mobile/web, sincronizamos tambien la ficha del centro.
         correo_centro = (data.get("correo_centro") or "").strip()
         telefono_centro = (data.get("telefono_centro") or "").strip()
         base_tierra = _parse_boolish(data.get("base_tierra"))
@@ -199,53 +193,41 @@ def crear_permiso_trabajo():
         if cantidad_radares is not None:
             centro.cantidad_radares = cantidad_radares
 
-        db.session.add(permiso)
+        db.session.add(item)
         db.session.commit()
-        return jsonify({"message": "Permiso de trabajo creado", "permiso": _serialize_permiso(permiso)}), 201
+        return jsonify({"message": "Mantencion en terreno creada", "mantencion": _serialize_mantencion(item)}), 201
     except ValueError as e:
         db.session.rollback()
         return jsonify({"error": str(e)}), 400
     except Exception as e:
         db.session.rollback()
-        return jsonify({"error": f"Error al crear permiso de trabajo: {str(e)}"}), 500
+        return jsonify({"error": f"Error al crear mantencion en terreno: {str(e)}"}), 500
 
 
-@permisos_trabajo_blueprint.route('/<int:id_permiso_trabajo>', methods=['PUT'])
-def actualizar_permiso_trabajo(id_permiso_trabajo):
+@mantenciones_terreno_blueprint.route('/<int:id_mantencion_terreno>', methods=['PUT'])
+def actualizar_mantencion_terreno(id_mantencion_terreno):
     data = request.get_json() or {}
     try:
-        permiso = PermisoTrabajo.query.get(id_permiso_trabajo)
-        if not permiso:
-            return jsonify({"error": "Permiso de trabajo no encontrado"}), 404
+        item = MantencionTerreno.query.get(id_mantencion_terreno)
+        if not item:
+            return jsonify({"error": "Mantencion en terreno no encontrada"}), 404
 
         if "centro_id" in data and data.get("centro_id"):
             centro = Centro.query.get(data.get("centro_id"))
             if not centro:
                 return jsonify({"error": "Centro no encontrado"}), 404
-            permiso.centro_id = data.get("centro_id")
-
-        if "acta_entrega_id" in data:
-            acta_entrega_id = data.get("acta_entrega_id")
-            if acta_entrega_id:
-                acta = ActaEntrega.query.get(acta_entrega_id)
-                if not acta:
-                    return jsonify({"error": "Acta de entrega no encontrada"}), 404
-            permiso.acta_entrega_id = acta_entrega_id
+            item.centro_id = data.get("centro_id")
 
         if "fecha_ingreso" in data:
             fecha_ingreso = _parse_date(data.get("fecha_ingreso"))
             if not fecha_ingreso:
                 return jsonify({"error": "fecha_ingreso invalida"}), 400
-            permiso.fecha_ingreso = fecha_ingreso
+            item.fecha_ingreso = fecha_ingreso
 
         if "fecha_salida" in data:
-            permiso.fecha_salida = _parse_date(data.get("fecha_salida"))
+            item.fecha_salida = _parse_date(data.get("fecha_salida"))
 
-        numeric_fields = [
-            "medicion_fase_neutro",
-            "medicion_neutro_tierra",
-            "hertz",
-        ]
+        numeric_fields = ["medicion_fase_neutro", "medicion_neutro_tierra", "hertz"]
         for campo in numeric_fields:
             if campo in data:
                 data[campo] = _validate_numeric_measure(data, campo)
@@ -257,6 +239,7 @@ def actualizar_permiso_trabajo(id_permiso_trabajo):
             "telefono_centro",
             "region",
             "localidad",
+            "responsabilidad",
             "tecnico_1",
             "firma_tecnico_1",
             "tecnico_2",
@@ -270,55 +253,55 @@ def actualizar_permiso_trabajo(id_permiso_trabajo):
             "medicion_neutro_tierra",
             "hertz",
             "descripcion_trabajo",
+            "evidencia_foto",
         ]:
             if campo in data:
-                setattr(permiso, campo, data.get(campo))
+                setattr(item, campo, data.get(campo))
 
-        # Mantener sincronizado con ficha del centro cuando se edita desde permiso.
         if "correo_centro" in data:
             correo_centro = (data.get("correo_centro") or "").strip()
             if correo_centro:
-                centro = Centro.query.get(permiso.centro_id)
+                centro = Centro.query.get(item.centro_id)
                 if centro:
                     centro.correo_centro = correo_centro
         if "telefono_centro" in data:
             telefono_centro = (data.get("telefono_centro") or "").strip()
             if telefono_centro:
-                centro = Centro.query.get(permiso.centro_id)
+                centro = Centro.query.get(item.centro_id)
                 if centro:
                     centro.telefono = telefono_centro
         if "base_tierra" in data:
             base_tierra = _parse_boolish(data.get("base_tierra"))
             if base_tierra is not None:
-                centro = Centro.query.get(permiso.centro_id)
+                centro = Centro.query.get(item.centro_id)
                 if centro:
                     centro.base_tierra = base_tierra
         if "cantidad_radares" in data:
             cantidad_radares = _parse_optional_int(data.get("cantidad_radares"), "cantidad_radares")
             if cantidad_radares is not None:
-                centro = Centro.query.get(permiso.centro_id)
+                centro = Centro.query.get(item.centro_id)
                 if centro:
                     centro.cantidad_radares = cantidad_radares
 
         db.session.commit()
-        return jsonify({"message": "Permiso de trabajo actualizado", "permiso": _serialize_permiso(permiso)}), 200
+        return jsonify({"message": "Mantencion en terreno actualizada", "mantencion": _serialize_mantencion(item)}), 200
     except ValueError as e:
         db.session.rollback()
         return jsonify({"error": str(e)}), 400
     except Exception as e:
         db.session.rollback()
-        return jsonify({"error": f"Error al actualizar permiso de trabajo: {str(e)}"}), 500
+        return jsonify({"error": f"Error al actualizar mantencion en terreno: {str(e)}"}), 500
 
 
-@permisos_trabajo_blueprint.route('/<int:id_permiso_trabajo>', methods=['DELETE'])
-def eliminar_permiso_trabajo(id_permiso_trabajo):
+@mantenciones_terreno_blueprint.route('/<int:id_mantencion_terreno>', methods=['DELETE'])
+def eliminar_mantencion_terreno(id_mantencion_terreno):
     try:
-        permiso = PermisoTrabajo.query.get(id_permiso_trabajo)
-        if not permiso:
-            return jsonify({"error": "Permiso de trabajo no encontrado"}), 404
-        db.session.delete(permiso)
+        item = MantencionTerreno.query.get(id_mantencion_terreno)
+        if not item:
+            return jsonify({"error": "Mantencion en terreno no encontrada"}), 404
+        db.session.delete(item)
         db.session.commit()
-        return jsonify({"message": "Permiso de trabajo eliminado"}), 200
+        return jsonify({"message": "Mantencion en terreno eliminada"}), 200
     except Exception as e:
         db.session.rollback()
-        return jsonify({"error": f"Error al eliminar permiso de trabajo: {str(e)}"}), 500
+        return jsonify({"error": f"Error al eliminar mantencion en terreno: {str(e)}"}), 500

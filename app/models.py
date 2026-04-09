@@ -424,7 +424,9 @@ class PermisoTrabajo(db.Model):
     region = db.Column(db.String(120), nullable=True)
     localidad = db.Column(db.String(120), nullable=True)
     tecnico_1 = db.Column(db.String(120), nullable=True)
+    firma_tecnico_1 = db.Column(db.Text, nullable=True)
     tecnico_2 = db.Column(db.String(120), nullable=True)
+    firma_tecnico_2 = db.Column(db.Text, nullable=True)
     recepciona_nombre = db.Column(db.String(120), nullable=True)
     recepciona_rut = db.Column(db.String(20), nullable=True)
     firma_recepciona = db.Column(db.Text, nullable=True)
@@ -443,6 +445,44 @@ class PermisoTrabajo(db.Model):
     def __repr__(self):
         return (
             f"<PermisoTrabajo(id_permiso_trabajo={self.id_permiso_trabajo}, centro_id={self.centro_id}, "
+            f"fecha_ingreso={self.fecha_ingreso}, fecha_salida={self.fecha_salida})>"
+        )
+
+
+class MantencionTerreno(db.Model):
+    __tablename__ = 'mantenciones_terreno'
+
+    id_mantencion_terreno = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    centro_id = db.Column(db.BigInteger, db.ForeignKey('centros.id_centro', ondelete="CASCADE"), nullable=False, index=True)
+    fecha_ingreso = db.Column(db.Date, nullable=False, index=True)
+    fecha_salida = db.Column(db.Date, nullable=True, index=True)
+    correo_centro = db.Column(db.String(180), nullable=True)
+    telefono_centro = db.Column(db.String(40), nullable=True)
+    region = db.Column(db.String(120), nullable=True)
+    localidad = db.Column(db.String(120), nullable=True)
+    responsabilidad = db.Column(db.String(20), nullable=True)
+    tecnico_1 = db.Column(db.String(120), nullable=True)
+    firma_tecnico_1 = db.Column(db.Text, nullable=True)
+    tecnico_2 = db.Column(db.String(120), nullable=True)
+    firma_tecnico_2 = db.Column(db.Text, nullable=True)
+    recepciona_nombre = db.Column(db.String(120), nullable=True)
+    recepciona_rut = db.Column(db.String(20), nullable=True)
+    firma_recepciona = db.Column(db.Text, nullable=True)
+    puntos_gps = db.Column(db.Text, nullable=True)
+    sellos = db.Column(db.Text, nullable=True)
+    medicion_fase_neutro = db.Column(db.String(50), nullable=True)
+    medicion_neutro_tierra = db.Column(db.String(50), nullable=True)
+    hertz = db.Column(db.String(30), nullable=True)
+    descripcion_trabajo = db.Column(db.Text, nullable=True)
+    evidencia_foto = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    centro = db.relationship('Centro', backref=db.backref('mantenciones_terreno', cascade="all, delete-orphan"))
+
+    def __repr__(self):
+        return (
+            f"<MantencionTerreno(id_mantencion_terreno={self.id_mantencion_terreno}, centro_id={self.centro_id}, "
             f"fecha_ingreso={self.fecha_ingreso}, fecha_salida={self.fecha_salida})>"
         )
 
