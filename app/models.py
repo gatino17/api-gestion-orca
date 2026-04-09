@@ -487,6 +487,48 @@ class MantencionTerreno(db.Model):
         )
 
 
+class CambioEquipoMantencion(db.Model):
+    __tablename__ = 'cambios_equipo_mantencion'
+
+    id_cambio_equipo_mantencion = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    mantencion_id = db.Column(
+        db.Integer,
+        db.ForeignKey('mantenciones_terreno.id_mantencion_terreno', ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+    centro_id = db.Column(
+        db.BigInteger,
+        db.ForeignKey('centros.id_centro', ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+    armado_id = db.Column(db.Integer, db.ForeignKey('armados.id_armado', ondelete="SET NULL"), nullable=True, index=True)
+    equipo_id = db.Column(db.Integer, db.ForeignKey('equipos_ip.id_equipo', ondelete="SET NULL"), nullable=True, index=True)
+    equipo = db.Column(db.String(120), nullable=False)
+    serie_anterior = db.Column(db.String(60), nullable=True)
+    codigo_anterior = db.Column(db.String(60), nullable=True)
+    serie_nueva = db.Column(db.String(60), nullable=True)
+    codigo_nuevo = db.Column(db.String(60), nullable=True)
+    tecnico = db.Column(db.String(120), nullable=True)
+    observacion = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    mantencion = db.relationship(
+        'MantencionTerreno',
+        backref=db.backref('cambios_equipo', cascade="all, delete-orphan")
+    )
+    centro = db.relationship('Centro', backref='cambios_equipo_mantencion')
+    armado = db.relationship('Armado', backref='cambios_equipo_mantencion')
+    equipo_ref = db.relationship('EquiposIP', backref='cambios_equipo_mantencion')
+
+    def __repr__(self):
+        return (
+            f"<CambioEquipoMantencion(id={self.id_cambio_equipo_mantencion}, mantencion_id={self.mantencion_id}, "
+            f"centro_id={self.centro_id}, equipo='{self.equipo}')>"
+        )
+
+
 # Tabla Armados técnicos
 class Armado(db.Model):
     __tablename__ = 'armados'

@@ -4,7 +4,7 @@ import re
 from flask import Blueprint, jsonify, request
 
 from ..database import db
-from ..models import Centro, MantencionTerreno
+from ..models import Armado, ArmadoCajaMovimiento, CambioEquipoMantencion, Centro, EquiposIP, MantencionTerreno
 
 
 mantenciones_terreno_blueprint = Blueprint('mantenciones_terreno', __name__)
@@ -109,6 +109,24 @@ def _serialize_mantencion(item):
         "cantidad_radares": centro.cantidad_radares if centro else None,
         "created_at": item.created_at.isoformat() if item.created_at else None,
         "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+    }
+
+
+def _serialize_cambio_equipo(item):
+    return {
+        "id_cambio_equipo_mantencion": item.id_cambio_equipo_mantencion,
+        "mantencion_id": item.mantencion_id,
+        "centro_id": item.centro_id,
+        "armado_id": item.armado_id,
+        "equipo_id": item.equipo_id,
+        "equipo": item.equipo,
+        "serie_anterior": item.serie_anterior,
+        "codigo_anterior": item.codigo_anterior,
+        "serie_nueva": item.serie_nueva,
+        "codigo_nuevo": item.codigo_nuevo,
+        "tecnico": item.tecnico,
+        "observacion": item.observacion,
+        "created_at": item.created_at.isoformat() if item.created_at else None,
     }
 
 
@@ -305,3 +323,111 @@ def eliminar_mantencion_terreno(id_mantencion_terreno):
     except Exception as e:
         db.session.rollback()
         return jsonify({"error": f"Error al eliminar mantencion en terreno: {str(e)}"}), 500
+
+
+@mantenciones_terreno_blueprint.route('/<int:id_mantencion_terreno>/cambios_equipo', methods=['GET'])
+def listar_cambios_equipo_mantencion(id_mantencion_terreno):
+    try:
+        mantencion = MantencionTerreno.query.get(id_mantencion_terreno)
+        if not mantencion:
+            return jsonify({"error": "Mantencion en terreno no encontrada"}), 404
+
+        cambios = (
+            CambioEquipoMantencion.query
+            .filter(CambioEquipoMantencion.mantencion_id == id_mantencion_terreno)
+            .order_by(CambioEquipoMantencion.created_at.desc(), CambioEquipoMantencion.id_cambio_equipo_mantencion.desc())
+            .all()
+        )
+        return jsonify([_serialize_cambio_equipo(c) for c in cambios]), 200
+    except Exception as e:
+        return jsonify({"error": f"Error al listar cambios de equipo: {str(e)}"}), 500
+
+
+@mantenciones_terreno_blueprint.route('/<int:id_mantencion_terreno>/cambios_equipo', methods=['POST'])
+def crear_cambio_equipo_mantencion(id_mantencion_terreno):
+    data = request.get_json() or {}
+    try:
+        mantencion = MantencionTerreno.query.get(id_mantencion_terreno)
+        if not mantencion:
+            return jsonify({"error": "Mantencion en terreno no encontrada"}), 404
+
+        equipo_id = data.get("equipo_id")
+        if not equipo_id:
+            return jsonify({"error": "equipo_id es requerido"}), 400
+
+        equipo = EquiposIP.query.get(equipo_id)
+        if not equipo or int(equipo.centro_id or 0) != int(mantencion.centro_id or 0):
+            return jsonify({"error": "Equipo no encontrado para este centro"}), 404
+
+        serie_nueva = (data.get("serie_nueva") or "").strip() or None
+        codigo_nuevo = (data.get("codigo_nuevo") or "").strip() or None
+        # Si no llega codigo_nuevo desde cliente, derivarlo del N° serie nuevo (primeros 5 dígitos),
+        # manteniendo el mismo criterio usado en planilla de armado.
+        if not codigo_nuevo and serie_nueva:
+            solo_numeros = re.sub(r"\D+", "", serie_nueva)
+            codigo_nuevo = (solo_numeros[:5] if solo_numeros else serie_nueva[:5]) or None
+        if not serie_nueva and not codigo_nuevo:
+            return jsonify({"error": "Debes ingresar serie_nueva o codigo_nuevo"}), 400
+
+        serie_anterior = equipo.numero_serie
+        codigo_anterior = equipo.codigo
+
+        if serie_nueva:
+            equipo.numero_serie = serie_nueva
+        if codigo_nuevo:
+            equipo.codigo = codigo_nuevo
+
+        armado_id = data.get("armado_id")
+        armado = None
+        if armado_id:
+            armado = Armado.query.get(armado_id)
+            if not armado or int(armado.centro_id or 0) != int(mantencion.centro_id or 0):
+                return jsonify({"error": "El armado indicado no pertenece al centro"}), 400
+        else:
+            armado = (
+                Armado.query
+                .filter(Armado.centro_id == mantencion.centro_id)
+                .order_by(Armado.fecha_cierre.desc(), Armado.id_armado.desc())
+                .first()
+            )
+
+        tecnico = (data.get("tecnico") or "").strip() or mantencion.tecnico_1 or None
+        observacion = data.get("observacion")
+
+        cambio = CambioEquipoMantencion(
+            mantencion_id=mantencion.id_mantencion_terreno,
+            centro_id=mantencion.centro_id,
+            armado_id=armado.id_armado if armado else None,
+            equipo_id=equipo.id_equipo,
+            equipo=equipo.nombre or "Equipo",
+            serie_anterior=serie_anterior,
+            codigo_anterior=codigo_anterior,
+            serie_nueva=equipo.numero_serie,
+            codigo_nuevo=equipo.codigo,
+            tecnico=tecnico,
+            observacion=observacion,
+        )
+        db.session.add(cambio)
+
+        # Impacta historial global de armados sin borrar trazabilidad anterior.
+        if armado:
+            # En mantenciones no se debe arrastrar la caja del armado original.
+            caja_mov = "Sin caja"
+            db.session.add(
+                ArmadoCajaMovimiento(
+                    armado_id=armado.id_armado,
+                    tipo="equipo",
+                    item_id=equipo.id_equipo,
+                    nombre_item=f"{equipo.nombre} (reemplazo_mantencion)",
+                    numero_serie=equipo.numero_serie,
+                    caja=caja_mov,
+                    cantidad=1,
+                    tecnico_id=armado.tecnico_id,
+                )
+            )
+
+        db.session.commit()
+        return jsonify({"message": "Cambio de equipo registrado", "cambio": _serialize_cambio_equipo(cambio)}), 201
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": f"Error al registrar cambio de equipo: {str(e)}"}), 500
