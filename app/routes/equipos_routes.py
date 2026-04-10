@@ -42,6 +42,40 @@ def obtener_equipos():
     
     return jsonify(equipos_data), 200
 
+
+@equipos_bp.route('/validar-serie', methods=['GET'])
+def validar_serie_equipo():
+    numero_serie = (request.args.get('numero_serie') or '').strip()
+    if not numero_serie:
+        return jsonify({"duplicado": False}), 200
+
+    exclude_equipo_id = request.args.get('exclude_equipo_id', type=int)
+    centro_id_actual = request.args.get('centro_id', type=int)
+
+    query = EquiposIP.query.filter(EquiposIP.numero_serie == numero_serie)
+    if exclude_equipo_id:
+        query = query.filter(EquiposIP.id_equipo != exclude_equipo_id)
+    if centro_id_actual:
+        query = query.filter(EquiposIP.centro_id != centro_id_actual)
+
+    conflicto = query.order_by(EquiposIP.id_equipo.desc()).first()
+    if not conflicto:
+        return jsonify({"duplicado": False}), 200
+
+    centro = Centro.query.get(conflicto.centro_id)
+    return jsonify({
+        "duplicado": True,
+        "numero_serie": numero_serie,
+        "equipo": {
+            "id_equipo": conflicto.id_equipo,
+            "nombre": conflicto.nombre,
+            "codigo": conflicto.codigo,
+            "caja": conflicto.caja,
+            "centro_id": conflicto.centro_id,
+            "centro_nombre": centro.nombre if centro else None
+        }
+    }), 200
+
 # Crear equipo
 @equipos_bp.route('/', methods=['POST'])
 def crear_equipo():
