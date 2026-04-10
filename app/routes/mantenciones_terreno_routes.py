@@ -418,7 +418,7 @@ def crear_cambio_equipo_mantencion(id_mantencion_terreno):
                     armado_id=armado.id_armado,
                     tipo="equipo",
                     item_id=equipo.id_equipo,
-                    nombre_item=f"{equipo.nombre} (reemplazo_mantencion)",
+                    nombre_item=f"{equipo.nombre} (reemplazo_mantencion_N{mantencion.id_mantencion_terreno})",
                     numero_serie=equipo.numero_serie,
                     caja=caja_mov,
                     cantidad=1,

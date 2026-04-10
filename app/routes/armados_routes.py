@@ -1,12 +1,16 @@
 from flask import Blueprint, request, jsonify
-from ..models import Armado, ArmadoParticipacion, ArmadoMaterial, Centro, User, EquiposIP
+from ..models import Armado, ArmadoParticipacion, ArmadoMaterial, Centro, Cliente, User, EquiposIP
 from ..models import ArmadoCajaMovimiento
 from ..database import db
 from ..socketio_ext import emit_armado_event
 from datetime import datetime
 import unicodedata
+import jwt
+import re
+from sqlalchemy import and_, or_
 
 armados_blueprint = Blueprint('armados', __name__)
+SECRET_KEY = "remoto753524"
 
 
 def normalizar_texto(valor):
@@ -26,11 +30,35 @@ def parse_date(value):
         return None
 
 
+def derivar_codigo_desde_serie(serie):
+    raw = (serie or "").strip()
+    if not raw:
+        return None
+    solo_numeros = re.sub(r"\D+", "", raw)
+    return (solo_numeros[:5] if solo_numeros else raw[:5]) or None
+
+
 def emitir_actualizacion_armado(armado_id, tipo="armado"):
     emit_armado_event(
         "armado_updated",
         {"armado_id": armado_id, "tipo": tipo, "ts": datetime.utcnow().isoformat()},
     )
+
+
+def usuario_actual_desde_token():
+    token = request.headers.get('Authorization') or ''
+    if not token.startswith("Bearer "):
+        return None
+    try:
+        payload = jwt.decode(token.split("Bearer ")[1], SECRET_KEY, algorithms=['HS256'])
+        user_id = payload.get('user_id') or payload.get('id') or payload.get('sub')
+        try:
+            user_id = int(user_id)
+        except Exception:
+            return None
+        return User.query.get(user_id)
+    except Exception:
+        return None
 
 
 @armados_blueprint.route('/', methods=['GET'])
@@ -286,14 +314,28 @@ def listar_movimientos_recientes():
 
     armado_id = request.args.get('armado_id', type=int)
     centro_id = request.args.get('centro_id', type=int)
+    cliente = (request.args.get('cliente') or '').strip()
     numero_serie = (request.args.get('numero_serie') or '').strip()
 
     base_query = ArmadoCajaMovimiento.query.filter(ArmadoCajaMovimiento.cantidad != 0)  # solo cambios reales
+    joined_armado = False
     if armado_id:
         base_query = base_query.filter(ArmadoCajaMovimiento.armado_id == armado_id)
     if centro_id:
-        base_query = base_query.join(Armado, Armado.id_armado == ArmadoCajaMovimiento.armado_id)\
-                               .filter(Armado.centro_id == centro_id)
+        if not joined_armado:
+            base_query = base_query.join(Armado, Armado.id_armado == ArmadoCajaMovimiento.armado_id)
+            joined_armado = True
+        base_query = base_query.filter(Armado.centro_id == centro_id)
+    if cliente:
+        if not joined_armado:
+            base_query = base_query.join(Armado, Armado.id_armado == ArmadoCajaMovimiento.armado_id)
+            joined_armado = True
+        base_query = (
+            base_query
+            .join(Centro, Centro.id_centro == Armado.centro_id)
+            .join(Cliente, Cliente.id_cliente == Centro.cliente_id)
+            .filter(Cliente.nombre.ilike(cliente))
+        )
     if numero_serie:
         base_query = base_query.filter(
             ArmadoCajaMovimiento.numero_serie.ilike(f"%{numero_serie}%")
@@ -329,6 +371,179 @@ def listar_movimientos_recientes():
             "centro_nombre": armado.centro.nombre if armado and armado.centro else None
         })
     return jsonify({"items": data, "total": total, "page": page, "limit": limite}), 200
+
+
+@armados_blueprint.route('/<int:id_armado>/historial-equipos', methods=['GET'])
+def historial_equipos_armado(id_armado):
+    armado = Armado.query.get_or_404(id_armado)
+
+    movimientos = (
+        ArmadoCajaMovimiento.query
+        .filter(
+            ArmadoCajaMovimiento.armado_id == id_armado,
+            ArmadoCajaMovimiento.tipo == 'equipo',
+            ArmadoCajaMovimiento.cantidad != 0
+        )
+        .order_by(ArmadoCajaMovimiento.fecha.asc(), ArmadoCajaMovimiento.id_movimiento.asc())
+        .all()
+    )
+
+    equipos_actuales = {
+        int(e.id_equipo): e
+        for e in EquiposIP.query.filter_by(centro_id=armado.centro_id).all()
+    }
+
+    resumen_map = {}
+    ultima_serie_por_item = {}
+    eventos = []
+
+    for m in movimientos:
+        item_key = int(m.item_id or 0)
+        item = resumen_map.get(item_key)
+        serie_mov = (m.numero_serie or "").strip()
+        fecha_mov = m.fecha.isoformat() if m.fecha else None
+        correlativo_match = re.search(r"reemplazo_mantencion_N(\d+)", str(m.nombre_item or ""), flags=re.IGNORECASE)
+        correlativo_mov = correlativo_match.group(1) if correlativo_match else None
+
+        serie_anterior = ultima_serie_por_item.get(item_key, "")
+
+        if item is None:
+            equipo_actual = equipos_actuales.get(item_key)
+            nombre_base = (
+                (equipo_actual.nombre if equipo_actual else None)
+                or (m.nombre_item or "")
+            )
+            item = {
+                "item_id": item_key,
+                "nombre_item": nombre_base,
+                "serie_inicial": serie_mov or "-",
+                "serie_inicial_fecha": fecha_mov,
+                "serie_anterior_actual": "-",
+                "serie_anterior_actual_fecha": None,
+                "serie_actual": serie_mov or "-",
+                "serie_actual_fecha": fecha_mov,
+                "correlativo_ultimo": correlativo_mov,
+                "cambios": 0,
+                "ultima_actualizacion": m.fecha.isoformat() if m.fecha else None
+            }
+            resumen_map[item_key] = item
+        else:
+            if serie_mov and serie_mov != item["serie_actual"]:
+                item["cambios"] += 1
+                item["serie_anterior_actual"] = item["serie_actual"] or "-"
+                item["serie_anterior_actual_fecha"] = item.get("serie_actual_fecha")
+                item["serie_actual"] = serie_mov
+                item["serie_actual_fecha"] = fecha_mov
+                if correlativo_mov:
+                    item["correlativo_ultimo"] = correlativo_mov
+            item["ultima_actualizacion"] = m.fecha.isoformat() if m.fecha else item["ultima_actualizacion"]
+
+        if serie_mov:
+            ultima_serie_por_item[item_key] = serie_mov
+
+        eventos.append({
+            "id_movimiento": m.id_movimiento,
+            "item_id": item_key,
+            "nombre_item": m.nombre_item,
+            "serie_anterior": serie_anterior or "-",
+            "serie_nueva": serie_mov or "-",
+            "fecha_serie_anterior": item.get("serie_anterior_actual_fecha") if item else None,
+            "fecha_serie_nueva": fecha_mov,
+            "correlativo": correlativo_mov,
+            "numero_serie": serie_mov or "-",
+            "tecnico_id": m.tecnico_id,
+            "tecnico_nombre": m.tecnico.name if m.tecnico else None,
+            "fecha": m.fecha.isoformat() if m.fecha else None
+        })
+
+    resumen = sorted(
+        resumen_map.values(),
+        key=lambda x: (-int(x.get("cambios", 0)), str(x.get("nombre_item", "")))
+    )
+
+    return jsonify({
+        "armado": {
+            "id_armado": armado.id_armado,
+            "centro_id": armado.centro_id,
+            "centro_nombre": armado.centro.nombre if armado.centro else None,
+            "cliente_nombre": (
+                armado.centro.cliente.nombre
+                if armado.centro and armado.centro.cliente
+                else None
+            )
+        },
+        "resumen": resumen,
+        "eventos": list(reversed(eventos))
+    }), 200
+
+
+@armados_blueprint.route('/movimientos/<int:id_movimiento>', methods=['DELETE'])
+def eliminar_movimiento_global(id_movimiento):
+    usuario = usuario_actual_desde_token()
+    if not usuario or (usuario.rol or "").lower() != "admin":
+        return jsonify({"message": "No autorizado"}), 403
+
+    movimiento = ArmadoCajaMovimiento.query.get(id_movimiento)
+    if not movimiento:
+        return jsonify({"message": "Movimiento no encontrado"}), 404
+
+    armado_id = movimiento.armado_id
+    restauracion = None
+
+    try:
+        if movimiento.tipo == "equipo" and movimiento.item_id:
+            armado = Armado.query.get(armado_id)
+            equipo = EquiposIP.query.get(movimiento.item_id)
+            if equipo and armado and int(equipo.centro_id or 0) == int(armado.centro_id or 0):
+                base_query = ArmadoCajaMovimiento.query.filter(
+                    ArmadoCajaMovimiento.armado_id == armado_id,
+                    ArmadoCajaMovimiento.tipo == "equipo",
+                    ArmadoCajaMovimiento.item_id == movimiento.item_id,
+                    ArmadoCajaMovimiento.cantidad != 0,
+                )
+                ultimo_mov = base_query.order_by(
+                    ArmadoCajaMovimiento.fecha.desc(),
+                    ArmadoCajaMovimiento.id_movimiento.desc(),
+                ).first()
+                # Solo se restaura planilla si se borra el ultimo movimiento del equipo.
+                if ultimo_mov and int(ultimo_mov.id_movimiento) == int(movimiento.id_movimiento):
+                    mov_anterior = (
+                        base_query.filter(
+                            ArmadoCajaMovimiento.id_movimiento != movimiento.id_movimiento,
+                            or_(
+                                ArmadoCajaMovimiento.fecha < movimiento.fecha,
+                                and_(
+                                    ArmadoCajaMovimiento.fecha == movimiento.fecha,
+                                    ArmadoCajaMovimiento.id_movimiento < movimiento.id_movimiento,
+                                ),
+                            ),
+                        )
+                        .order_by(
+                            ArmadoCajaMovimiento.fecha.desc(),
+                            ArmadoCajaMovimiento.id_movimiento.desc(),
+                        )
+                        .first()
+                    )
+                    serie_restaurada = (mov_anterior.numero_serie or "").strip() if mov_anterior else None
+                    equipo.numero_serie = serie_restaurada or None
+                    equipo.codigo = derivar_codigo_desde_serie(serie_restaurada)
+                    restauracion = {
+                        "equipo_id": equipo.id_equipo,
+                        "serie_restaurada": equipo.numero_serie,
+                        "codigo_restaurado": equipo.codigo,
+                    }
+    except Exception:
+        # Nunca bloquear eliminacion por un error de restauracion.
+        restauracion = None
+
+    db.session.delete(movimiento)
+    db.session.commit()
+    emitir_actualizacion_armado(armado_id, "movimiento_deleted")
+    return jsonify({
+        "message": "Movimiento eliminado",
+        "id_movimiento": id_movimiento,
+        "restauracion": restauracion,
+    }), 200
 
 
 @armados_blueprint.route('/<int:id_armado>/participaciones', methods=['GET'])
