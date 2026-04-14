@@ -1,5 +1,5 @@
 from flask import Blueprint, request, jsonify
-from ..models import Armado, ArmadoParticipacion, ArmadoMaterial, Centro, Cliente, User, EquiposIP
+from ..models import Armado, ArmadoParticipacion, ArmadoMaterial, Centro, Cliente, User, EquiposIP, RetiroTerreno, RetiroTerrenoEquipo
 from ..models import ArmadoCajaMovimiento
 from ..database import db
 from ..socketio_ext import emit_armado_event
@@ -393,6 +393,39 @@ def historial_equipos_armado(id_armado):
         for e in EquiposIP.query.filter_by(centro_id=armado.centro_id).all()
     }
 
+    retiros_equipos = (
+        RetiroTerrenoEquipo.query
+        .join(RetiroTerreno, RetiroTerreno.id_retiro_terreno == RetiroTerrenoEquipo.retiro_terreno_id)
+        .filter(
+            RetiroTerreno.centro_id == armado.centro_id,
+            RetiroTerrenoEquipo.retirado.is_(True)
+        )
+        .order_by(
+            RetiroTerreno.fecha_retiro.desc(),
+            RetiroTerreno.id_retiro_terreno.desc(),
+            RetiroTerrenoEquipo.id_retiro_equipo.desc()
+        )
+        .all()
+    )
+
+    retiro_por_item_id = {}
+    retiro_por_nombre = {}
+    for re in retiros_equipos:
+        retiro = re.retiro
+        if not retiro:
+            continue
+        dato_retiro = {
+            "serie_retirada": (re.numero_serie or "").strip() or "-",
+            "serie_retirada_fecha": retiro.fecha_retiro.isoformat() if retiro.fecha_retiro else None,
+            "correlativo_retiro": str(retiro.id_retiro_terreno),
+        }
+        equipo_id = int(re.equipo_id or 0) if re.equipo_id else 0
+        if equipo_id and equipo_id not in retiro_por_item_id:
+            retiro_por_item_id[equipo_id] = dato_retiro
+        nombre_key = normalizar_texto(re.equipo_nombre or "")
+        if nombre_key and nombre_key not in retiro_por_nombre:
+            retiro_por_nombre[nombre_key] = dato_retiro
+
     resumen_map = {}
     ultima_serie_por_item = {}
     eventos = []
@@ -413,6 +446,9 @@ def historial_equipos_armado(id_armado):
                 (equipo_actual.nombre if equipo_actual else None)
                 or (m.nombre_item or "")
             )
+            retiro_actual = retiro_por_item_id.get(item_key)
+            if not retiro_actual:
+                retiro_actual = retiro_por_nombre.get(normalizar_texto(nombre_base or ""))
             item = {
                 "item_id": item_key,
                 "nombre_item": nombre_base,
@@ -423,6 +459,9 @@ def historial_equipos_armado(id_armado):
                 "serie_actual": serie_mov or "-",
                 "serie_actual_fecha": fecha_mov,
                 "correlativo_ultimo": correlativo_mov,
+                "serie_retirada": (retiro_actual or {}).get("serie_retirada", "-"),
+                "serie_retirada_fecha": (retiro_actual or {}).get("serie_retirada_fecha"),
+                "correlativo_retiro": (retiro_actual or {}).get("correlativo_retiro"),
                 "cambios": 0,
                 "ultima_actualizacion": m.fecha.isoformat() if m.fecha else None
             }
@@ -455,6 +494,20 @@ def historial_equipos_armado(id_armado):
             "tecnico_nombre": m.tecnico.name if m.tecnico else None,
             "fecha": m.fecha.isoformat() if m.fecha else None
         })
+
+    for item in resumen_map.values():
+        item_key = int(item.get("item_id") or 0)
+        retiro_actual = retiro_por_item_id.get(item_key)
+        if not retiro_actual:
+            retiro_actual = retiro_por_nombre.get(normalizar_texto(item.get("nombre_item") or ""))
+        if retiro_actual:
+            item["serie_retirada"] = retiro_actual.get("serie_retirada") or "-"
+            item["serie_retirada_fecha"] = retiro_actual.get("serie_retirada_fecha")
+            item["correlativo_retiro"] = retiro_actual.get("correlativo_retiro")
+        else:
+            item["serie_retirada"] = item.get("serie_retirada") or "-"
+            item["serie_retirada_fecha"] = item.get("serie_retirada_fecha")
+            item["correlativo_retiro"] = item.get("correlativo_retiro")
 
     resumen = sorted(
         resumen_map.values(),

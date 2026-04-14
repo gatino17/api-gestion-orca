@@ -529,6 +529,67 @@ class CambioEquipoMantencion(db.Model):
         )
 
 
+class RetiroTerreno(db.Model):
+    __tablename__ = 'retiros_terreno'
+
+    id_retiro_terreno = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    centro_id = db.Column(db.BigInteger, db.ForeignKey('centros.id_centro', ondelete="CASCADE"), nullable=False, index=True)
+    fecha_retiro = db.Column(db.Date, nullable=False, index=True)
+    tipo_retiro = db.Column(db.String(20), nullable=False, default='parcial')  # parcial | completo
+    estado_logistico = db.Column(db.String(30), nullable=False, default='retirado_centro')  # retirado_centro | en_transito | en_bodega
+    observacion = db.Column(db.Text, nullable=True)
+    observacion_bodega = db.Column(db.Text, nullable=True)
+    recepcion_bodega_por = db.Column(db.String(120), nullable=True)
+    recepcion_bodega_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    fecha_recepcion_bodega = db.Column(db.DateTime, nullable=True)
+    tecnico_1 = db.Column(db.String(120), nullable=True)
+    firma_tecnico_1 = db.Column(db.Text, nullable=True)
+    tecnico_2 = db.Column(db.String(120), nullable=True)
+    firma_tecnico_2 = db.Column(db.Text, nullable=True)
+    recepciona_nombre = db.Column(db.String(120), nullable=True)
+    recepciona_rut = db.Column(db.String(20), nullable=True)
+    firma_recepciona = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    centro = db.relationship('Centro', backref=db.backref('retiros_terreno', cascade="all, delete-orphan"))
+    recepcion_bodega_user = db.relationship('User', backref='retiros_terreno_recepcionados')
+
+    def __repr__(self):
+        return (
+            f"<RetiroTerreno(id_retiro_terreno={self.id_retiro_terreno}, centro_id={self.centro_id}, "
+            f"fecha_retiro={self.fecha_retiro}, tipo_retiro={self.tipo_retiro})>"
+        )
+
+
+class RetiroTerrenoEquipo(db.Model):
+    __tablename__ = 'retiros_terreno_equipos'
+
+    id_retiro_equipo = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    retiro_terreno_id = db.Column(
+        db.Integer,
+        db.ForeignKey('retiros_terreno.id_retiro_terreno', ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+    equipo_id = db.Column(db.Integer, db.ForeignKey('equipos_ip.id_equipo', ondelete="SET NULL"), nullable=True, index=True)
+    equipo_nombre = db.Column(db.String(120), nullable=False)
+    numero_serie = db.Column(db.String(60), nullable=True)
+    codigo = db.Column(db.String(60), nullable=True)
+    retirado = db.Column(db.Boolean, nullable=False, default=False)
+    recibido_bodega = db.Column(db.Boolean, nullable=False, default=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    retiro = db.relationship('RetiroTerreno', backref=db.backref('equipos', cascade="all, delete-orphan"))
+    equipo_ref = db.relationship('EquiposIP', backref='retiros_terreno')
+
+    def __repr__(self):
+        return (
+            f"<RetiroTerrenoEquipo(id_retiro_equipo={self.id_retiro_equipo}, "
+            f"retiro_terreno_id={self.retiro_terreno_id}, equipo='{self.equipo_nombre}', retirado={self.retirado})>"
+        )
+
+
 # Tabla Armados técnicos
 class Armado(db.Model):
     __tablename__ = 'armados'

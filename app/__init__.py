@@ -39,6 +39,7 @@ from .routes.armados_routes import armados_blueprint
 from .routes.actas_entrega_routes import actas_entrega_blueprint
 from .routes.permisos_trabajo_routes import permisos_trabajo_blueprint
 from .routes.mantenciones_terreno_routes import mantenciones_terreno_blueprint
+from .routes.retiros_terreno_routes import retiros_terreno_blueprint
 
 
 
@@ -112,6 +113,7 @@ def create_app():
     app.register_blueprint(actas_entrega_blueprint, url_prefix='/api/actas_entrega')
     app.register_blueprint(permisos_trabajo_blueprint, url_prefix='/api/permisos_trabajo')
     app.register_blueprint(mantenciones_terreno_blueprint, url_prefix='/api/mantenciones_terreno')
+    app.register_blueprint(retiros_terreno_blueprint, url_prefix='/api/retiros_terreno')
       
     
   # Ruta para servir archivos desde la carpeta `uploads`
@@ -237,6 +239,46 @@ def create_app():
                 """
                 ALTER TABLE mantenciones_terreno
                 ADD COLUMN IF NOT EXISTS evidencia_foto TEXT
+                """
+            )
+        )
+        db.session.execute(
+            text(
+                """
+                ALTER TABLE retiros_terreno
+                ADD COLUMN IF NOT EXISTS observacion_bodega TEXT
+                """
+            )
+        )
+        db.session.execute(
+            text(
+                """
+                ALTER TABLE retiros_terreno
+                ADD COLUMN IF NOT EXISTS recepcion_bodega_por VARCHAR(120)
+                """
+            )
+        )
+        db.session.execute(
+            text(
+                """
+                ALTER TABLE retiros_terreno
+                ADD COLUMN IF NOT EXISTS recepcion_bodega_user_id INTEGER
+                """
+            )
+        )
+        db.session.execute(
+            text(
+                """
+                ALTER TABLE retiros_terreno
+                ADD COLUMN IF NOT EXISTS fecha_recepcion_bodega TIMESTAMP
+                """
+            )
+        )
+        db.session.execute(
+            text(
+                """
+                ALTER TABLE retiros_terreno_equipos
+                ADD COLUMN IF NOT EXISTS recibido_bodega BOOLEAN DEFAULT FALSE
                 """
             )
         )
