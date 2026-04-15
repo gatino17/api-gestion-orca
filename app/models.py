@@ -345,6 +345,7 @@ class Soporte(db.Model):
     categoria_falla = db.Column(db.String(50), nullable=True)
     cambio_equipo = db.Column(db.Boolean, default=False)
     equipo_cambiado = db.Column(db.String(100), nullable=True)
+    origen = db.Column(db.String(20), nullable=False, default='cliente')  # 'cliente' | 'orca'
     estado = db.Column(db.String(20), default='pendiente')  # <---
     fecha_cierre = db.Column(db.Date, nullable=True)  
 
@@ -356,7 +357,7 @@ class Soporte(db.Model):
             f"<Soporte(id_soporte={self.id_soporte}, centro_id={self.centro_id}, problema='{self.problema}', "
             f"tipo='{self.tipo}', fecha_soporte={self.fecha_soporte}, solucion='{self.solucion}', "
             f"categoria_falla='{self.categoria_falla}', cambio_equipo={self.cambio_equipo}, "
-            f"equipo_cambiado='{self.equipo_cambiado}', estado='{self.estado}', fecha_cierre={self.fecha_cierre})>"
+            f"equipo_cambiado='{self.equipo_cambiado}', origen='{self.origen}', estado='{self.estado}', fecha_cierre={self.fecha_cierre})>"
         )
 
 
@@ -475,6 +476,7 @@ class MantencionTerreno(db.Model):
     hertz = db.Column(db.String(30), nullable=True)
     descripcion_trabajo = db.Column(db.Text, nullable=True)
     evidencia_foto = db.Column(db.Text, nullable=True)
+    checklist_equipos = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 

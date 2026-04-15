@@ -1,4 +1,5 @@
 from datetime import datetime
+import json
 import re
 
 from flask import Blueprint, jsonify, request
@@ -72,6 +73,44 @@ def _parse_optional_int(value, field_name):
     return int(text)
 
 
+def _normalize_checklist(value):
+    if value in (None, ""):
+        return None
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            parsed = json.loads(text)
+        except Exception:
+            raise ValueError("checklist_equipos debe ser un JSON valido")
+    elif isinstance(value, list):
+        parsed = value
+    else:
+        raise ValueError("checklist_equipos debe ser un arreglo JSON")
+
+    normalized = []
+    for row in parsed:
+        if not isinstance(row, dict):
+            continue
+        equipo_id = row.get("equipo_id")
+        try:
+            equipo_id = int(equipo_id) if equipo_id not in (None, "", 0, "0") else None
+        except Exception:
+            equipo_id = None
+        normalized.append(
+            {
+                "equipo_id": equipo_id,
+                "equipo_nombre": str(row.get("equipo_nombre") or "").strip(),
+                "numero_serie": str(row.get("numero_serie") or "").strip(),
+                "codigo": str(row.get("codigo") or "").strip(),
+                "revisado": bool(row.get("revisado")),
+                "observacion": str(row.get("observacion") or "").strip(),
+            }
+        )
+    return json.dumps(normalized, ensure_ascii=False)
+
+
 def _serialize_mantencion(item):
     centro = item.centro
     cliente_nombre = centro.cliente.nombre if centro and centro.cliente else None
@@ -101,6 +140,7 @@ def _serialize_mantencion(item):
         "hertz": item.hertz,
         "descripcion_trabajo": item.descripcion_trabajo,
         "evidencia_foto": item.evidencia_foto,
+        "checklist_equipos": item.checklist_equipos,
         "empresa": cliente_nombre,
         "cliente": cliente_nombre,
         "centro": centro.nombre if centro else None,
@@ -172,6 +212,7 @@ def crear_mantencion_terreno():
         medicion_neutro_tierra = _validate_numeric_measure(data, "medicion_neutro_tierra")
         hertz = _validate_numeric_measure(data, "hertz")
         puntos_gps = _validate_gps_points(data.get("puntos_gps"))
+        checklist_equipos = _normalize_checklist(data.get("checklist_equipos"))
 
         item = MantencionTerreno(
             centro_id=centro_id,
@@ -196,6 +237,7 @@ def crear_mantencion_terreno():
             hertz=hertz,
             descripcion_trabajo=data.get("descripcion_trabajo"),
             evidencia_foto=data.get("evidencia_foto"),
+            checklist_equipos=checklist_equipos,
         )
 
         correo_centro = (data.get("correo_centro") or "").strip()
@@ -251,6 +293,8 @@ def actualizar_mantencion_terreno(id_mantencion_terreno):
                 data[campo] = _validate_numeric_measure(data, campo)
         if "puntos_gps" in data:
             data["puntos_gps"] = _validate_gps_points(data.get("puntos_gps"))
+        if "checklist_equipos" in data:
+            data["checklist_equipos"] = _normalize_checklist(data.get("checklist_equipos"))
 
         for campo in [
             "correo_centro",
@@ -272,6 +316,7 @@ def actualizar_mantencion_terreno(id_mantencion_terreno):
             "hertz",
             "descripcion_trabajo",
             "evidencia_foto",
+            "checklist_equipos",
         ]:
             if campo in data:
                 setattr(item, campo, data.get(campo))

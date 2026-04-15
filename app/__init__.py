@@ -245,6 +245,14 @@ def create_app():
         db.session.execute(
             text(
                 """
+                ALTER TABLE mantenciones_terreno
+                ADD COLUMN IF NOT EXISTS checklist_equipos TEXT
+                """
+            )
+        )
+        db.session.execute(
+            text(
+                """
                 ALTER TABLE retiros_terreno
                 ADD COLUMN IF NOT EXISTS observacion_bodega TEXT
                 """
