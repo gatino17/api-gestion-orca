@@ -20,6 +20,9 @@ def _parse_date(value):
 @soporte_blueprint.route('/', methods=['POST'])
 def crear_soporte():
     data = request.json
+    origen = str(data.get('origen', 'cliente')).lower().strip()
+    if origen not in ('cliente', 'orca'):
+        return jsonify({"error": "Origen invalido. Use 'cliente' u 'orca'."}), 400
 
     nuevo_soporte = Soporte(
         centro_id=data.get('centro_id'),
@@ -30,6 +33,7 @@ def crear_soporte():
         categoria_falla=data.get('categoria_falla'),
         cambio_equipo=data.get('cambio_equipo', False),
         equipo_cambiado=data.get('equipo_cambiado'),
+        origen=origen,
         estado=data.get('estado', 'pendiente'),
         fecha_cierre=_parse_date(data.get('fecha_cierre'))
     )
@@ -59,6 +63,7 @@ def obtener_soportes():
             "categoria_falla": soporte.categoria_falla,
             "cambio_equipo": soporte.cambio_equipo,
             "equipo_cambiado": soporte.equipo_cambiado,
+            "origen": soporte.origen or "cliente",
             "estado": soporte.estado,
             "fecha_cierre": soporte.fecha_cierre.isoformat() if soporte.fecha_cierre else None
         })
@@ -80,6 +85,11 @@ def actualizar_soporte(id_soporte):
     soporte.categoria_falla = data.get('categoria_falla', soporte.categoria_falla)
     soporte.cambio_equipo = data.get('cambio_equipo', soporte.cambio_equipo)
     soporte.equipo_cambiado = data.get('equipo_cambiado', soporte.equipo_cambiado)
+    if 'origen' in data:
+        origen = str(data.get('origen', 'cliente')).lower().strip()
+        if origen not in ('cliente', 'orca'):
+            return jsonify({"error": "Origen invalido. Use 'cliente' u 'orca'."}), 400
+        soporte.origen = origen
     soporte.estado = data.get('estado', soporte.estado)
     if 'fecha_cierre' in data:
         soporte.fecha_cierre = _parse_date(data.get('fecha_cierre'))

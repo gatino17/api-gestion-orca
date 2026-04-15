@@ -410,19 +410,19 @@ def historial_equipos_armado(id_armado):
 
     retiro_por_item_id = {}
     retiro_por_nombre = {}
-    for re in retiros_equipos:
-        retiro = re.retiro
+    for retiro_eq in retiros_equipos:
+        retiro = retiro_eq.retiro
         if not retiro:
             continue
         dato_retiro = {
-            "serie_retirada": (re.numero_serie or "").strip() or "-",
+            "serie_retirada": (retiro_eq.numero_serie or "").strip() or "-",
             "serie_retirada_fecha": retiro.fecha_retiro.isoformat() if retiro.fecha_retiro else None,
             "correlativo_retiro": str(retiro.id_retiro_terreno),
         }
-        equipo_id = int(re.equipo_id or 0) if re.equipo_id else 0
+        equipo_id = int(retiro_eq.equipo_id or 0) if retiro_eq.equipo_id else 0
         if equipo_id and equipo_id not in retiro_por_item_id:
             retiro_por_item_id[equipo_id] = dato_retiro
-        nombre_key = normalizar_texto(re.equipo_nombre or "")
+        nombre_key = normalizar_texto(retiro_eq.equipo_nombre or "")
         if nombre_key and nombre_key not in retiro_por_nombre:
             retiro_por_nombre[nombre_key] = dato_retiro
 
@@ -497,6 +497,13 @@ def historial_equipos_armado(id_armado):
 
     for item in resumen_map.values():
         item_key = int(item.get("item_id") or 0)
+        eq_actual = equipos_actuales.get(item_key)
+        serie_eq_actual = (eq_actual.numero_serie or "").strip() if eq_actual else ""
+        if serie_eq_actual:
+            if (item.get("serie_actual") or "-") in ("", "-"):
+                item["serie_actual"] = serie_eq_actual
+            if (item.get("serie_inicial") or "-") in ("", "-"):
+                item["serie_inicial"] = serie_eq_actual
         retiro_actual = retiro_por_item_id.get(item_key)
         if not retiro_actual:
             retiro_actual = retiro_por_nombre.get(normalizar_texto(item.get("nombre_item") or ""))
@@ -508,6 +515,31 @@ def historial_equipos_armado(id_armado):
             item["serie_retirada"] = item.get("serie_retirada") or "-"
             item["serie_retirada_fecha"] = item.get("serie_retirada_fecha")
             item["correlativo_retiro"] = item.get("correlativo_retiro")
+
+    # Fallback: si no hay movimientos historicos para un equipo, usar estado actual de planilla
+    # para que "Detalle tecnico" no quede vacio.
+    for equipo_id, eq in equipos_actuales.items():
+        if equipo_id in resumen_map:
+            continue
+        nombre_eq = (eq.nombre or "").strip() or "-"
+        serie_eq = (eq.numero_serie or "").strip() or "-"
+        retiro_actual = retiro_por_item_id.get(equipo_id) or retiro_por_nombre.get(normalizar_texto(nombre_eq))
+        resumen_map[equipo_id] = {
+            "item_id": equipo_id,
+            "nombre_item": nombre_eq,
+            "serie_inicial": serie_eq,
+            "serie_inicial_fecha": None,
+            "serie_anterior_actual": "-",
+            "serie_anterior_actual_fecha": None,
+            "serie_actual": serie_eq,
+            "serie_actual_fecha": None,
+            "correlativo_ultimo": None,
+            "serie_retirada": (retiro_actual or {}).get("serie_retirada", "-"),
+            "serie_retirada_fecha": (retiro_actual or {}).get("serie_retirada_fecha"),
+            "correlativo_retiro": (retiro_actual or {}).get("correlativo_retiro"),
+            "cambios": 0,
+            "ultima_actualizacion": None,
+        }
 
     resumen = sorted(
         resumen_map.values(),
