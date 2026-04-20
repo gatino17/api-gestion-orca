@@ -7,6 +7,7 @@ encargados_bp = Blueprint('encargados', __name__)
 def crear_encargado():
     data = request.get_json()
     nuevo_encargado = Encargado(
+        user_id=data.get('user_id'),
         nombre_encargado=data['nombre_encargado'],
         telefono=data.get('telefono'),
         direccion=data.get('direccion'),
@@ -24,6 +25,7 @@ def obtener_encargados():
     resultado = [
         {
             "id_encargado": enc.id_encargado,
+            "user_id": enc.user_id,
             "nombre_encargado": enc.nombre_encargado,
             "telefono": enc.telefono,
             "direccion": enc.direccion,
@@ -39,6 +41,8 @@ def obtener_encargados():
 def actualizar_encargado(id):
     data = request.get_json()
     encargado = Encargado.query.get_or_404(id)
+    if 'user_id' in data:
+        encargado.user_id = data.get('user_id')
     encargado.nombre_encargado = data.get('nombre_encargado', encargado.nombre_encargado)
     encargado.telefono = data.get('telefono', encargado.telefono)
     encargado.direccion = data.get('direccion', encargado.direccion)

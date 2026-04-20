@@ -24,6 +24,24 @@ class User(db.Model):
         return check_password_hash(self.password_hash, password)
 
 
+class Role(db.Model):
+    __tablename__ = 'roles'
+
+    id_role = db.Column(db.Integer, primary_key=True)
+    nombre = db.Column(db.String(60), unique=True, nullable=False, index=True)
+    descripcion = db.Column(db.String(255), nullable=True)
+
+
+class RolePage(db.Model):
+    __tablename__ = 'role_pages'
+
+    id_role_page = db.Column(db.Integer, primary_key=True)
+    role_id = db.Column(db.Integer, db.ForeignKey('roles.id_role', ondelete='CASCADE'), nullable=False, index=True)
+    page_key = db.Column(db.String(80), nullable=False, index=True)
+
+    role = db.relationship('Role', backref=db.backref('pages', cascade='all, delete-orphan'))
+
+
 class Cliente(db.Model):
     __tablename__ = 'clientes'
     
@@ -124,11 +142,13 @@ class Encargado(db.Model):
     __tablename__ = 'encargados'
     
     id_encargado = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='SET NULL'), unique=True, nullable=True, index=True)
     nombre_encargado = db.Column(db.String(100), nullable=False)
     telefono = db.Column(db.String(15), nullable=True)
     direccion = db.Column(db.String(255), nullable=True)
     especialidad = db.Column(db.String(100), nullable=True)
     licencia_conducir = db.Column(db.Boolean, nullable=True)
+    user = db.relationship('User', backref=db.backref('perfil_tecnico', uselist=False))
     
  # Tabla de asociación para la relación muchos a muchos
 actividades_encargados = db.Table('actividades_encargados',
@@ -391,17 +411,21 @@ class ActaEntrega(db.Model):
     id_acta_entrega = db.Column(db.Integer, primary_key=True, autoincrement=True)
     centro_id = db.Column(db.BigInteger, db.ForeignKey('centros.id_centro', ondelete="CASCADE"), nullable=False, index=True)
     armado_id = db.Column(db.Integer, db.ForeignKey('armados.id_armado', ondelete="SET NULL"), nullable=True, index=True)
+    actividad_id = db.Column(db.Integer, nullable=True, index=True)
     fecha_registro = db.Column(db.Date, nullable=False, index=True)
+    codigo_ponton = db.Column(db.String(180), nullable=True)
     region = db.Column(db.String(120), nullable=True)
     localidad = db.Column(db.String(120), nullable=True)
     tecnico_1 = db.Column(db.String(120), nullable=True)
     firma_tecnico_1 = db.Column(db.Text, nullable=True)
     tecnico_2 = db.Column(db.String(120), nullable=True)
     firma_tecnico_2 = db.Column(db.Text, nullable=True)
+    firmas_tecnicos_adicionales = db.Column(db.Text, nullable=True)
     recepciona_nombre = db.Column(db.String(120), nullable=True)
     firma_recepciona = db.Column(db.Text, nullable=True)
     equipos_considerados = db.Column(db.Text, nullable=True)
     centro_origen_traslado = db.Column(db.String(180), nullable=True)
+    tipo_instalacion = db.Column(db.String(30), nullable=False, default='instalacion')
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 

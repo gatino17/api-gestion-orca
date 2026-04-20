@@ -40,6 +40,8 @@ from .routes.actas_entrega_routes import actas_entrega_blueprint
 from .routes.permisos_trabajo_routes import permisos_trabajo_blueprint
 from .routes.mantenciones_terreno_routes import mantenciones_terreno_blueprint
 from .routes.retiros_terreno_routes import retiros_terreno_blueprint
+from .routes.roles_routes import roles_blueprint
+from .permissions import seed_default_roles
 
 
 
@@ -114,6 +116,7 @@ def create_app():
     app.register_blueprint(permisos_trabajo_blueprint, url_prefix='/api/permisos_trabajo')
     app.register_blueprint(mantenciones_terreno_blueprint, url_prefix='/api/mantenciones_terreno')
     app.register_blueprint(retiros_terreno_blueprint, url_prefix='/api/retiros_terreno')
+    app.register_blueprint(roles_blueprint, url_prefix='/api/roles')
       
     
   # Ruta para servir archivos desde la carpeta `uploads`
@@ -213,6 +216,23 @@ def create_app():
         db.session.execute(
             text(
                 """
+                ALTER TABLE actas_entrega
+                ADD COLUMN IF NOT EXISTS tipo_instalacion VARCHAR(30) DEFAULT 'instalacion'
+                """
+            )
+        )
+        db.session.execute(
+            text(
+                """
+                UPDATE actas_entrega
+                SET tipo_instalacion = 'instalacion'
+                WHERE tipo_instalacion IS NULL OR TRIM(tipo_instalacion) = ''
+                """
+            )
+        )
+        db.session.execute(
+            text(
+                """
                 ALTER TABLE permisos_trabajo
                 ADD COLUMN IF NOT EXISTS firma_tecnico_1 TEXT
                 """
@@ -247,6 +267,44 @@ def create_app():
                 """
                 ALTER TABLE mantenciones_terreno
                 ADD COLUMN IF NOT EXISTS checklist_equipos TEXT
+                """
+            )
+        )
+        db.session.execute(
+            text(
+                """
+                ALTER TABLE encargados
+                ADD COLUMN IF NOT EXISTS user_id INTEGER
+                """
+            )
+        )
+        db.session.execute(
+            text(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_encargados_user_id
+                ON encargados(user_id)
+                """
+            )
+        )
+        db.session.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS roles (
+                    id_role SERIAL PRIMARY KEY,
+                    nombre VARCHAR(60) UNIQUE NOT NULL,
+                    descripcion VARCHAR(255)
+                )
+                """
+            )
+        )
+        db.session.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS role_pages (
+                    id_role_page SERIAL PRIMARY KEY,
+                    role_id INTEGER NOT NULL REFERENCES roles(id_role) ON DELETE CASCADE,
+                    page_key VARCHAR(80) NOT NULL
+                )
                 """
             )
         )
@@ -290,6 +348,7 @@ def create_app():
                 """
             )
         )
+        seed_default_roles(db)
         db.session.commit()
 
     return app

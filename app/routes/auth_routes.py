@@ -3,16 +3,18 @@ from werkzeug.security import check_password_hash
 import jwt
 import datetime
 from sqlalchemy import func
+
 from ..models import User
-from ..database import db
+from ..permissions import get_pages_for_role_name
+
 
 auth_blueprint = Blueprint('auth', __name__)
-SECRET_KEY = "remoto753524"  # Cambia esto por una clave más segura
+SECRET_KEY = "remoto753524"
 
-# Ruta para iniciar sesión
+
 @auth_blueprint.route('/login', methods=['POST'])
 def login():
-    data = request.get_json()
+    data = request.get_json() or {}
     email = (data.get('email') or '').strip()
     password = data.get('password') or ''
 
@@ -23,15 +25,20 @@ def login():
     if not user or not check_password_hash(user.password_hash, password):
         return jsonify({'message': 'Invalid email or password'}), 401
 
-    token = jwt.encode({
-    'user_id': user.id,
-    'name': user.name,  # Asegúrate de incluir el nombre
-    'rol': user.rol, 
-    'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=1)
-    }, SECRET_KEY, algorithm='HS256')
+    token = jwt.encode(
+        {
+            'user_id': user.id,
+            'name': user.name,
+            'rol': user.rol,
+            'paginas': get_pages_for_role_name(user.rol),
+            'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=1),
+        },
+        SECRET_KEY,
+        algorithm='HS256',
+    )
     return jsonify({'message': 'Login successful', 'token': token}), 200
 
-# Ruta protegida de prueba
+
 @auth_blueprint.route('/protected', methods=['GET'])
 def protected_route():
     token = request.headers.get('Authorization')
