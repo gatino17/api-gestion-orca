@@ -41,6 +41,8 @@ from .routes.permisos_trabajo_routes import permisos_trabajo_blueprint
 from .routes.mantenciones_terreno_routes import mantenciones_terreno_blueprint
 from .routes.retiros_terreno_routes import retiros_terreno_blueprint
 from .routes.roles_routes import roles_blueprint
+from .routes.tecnico_bloqueos_routes import tecnico_bloqueos_blueprint
+from .routes.revision_equipos_routes import revision_equipos_blueprint
 from .permissions import seed_default_roles
 
 
@@ -117,6 +119,8 @@ def create_app():
     app.register_blueprint(mantenciones_terreno_blueprint, url_prefix='/api/mantenciones_terreno')
     app.register_blueprint(retiros_terreno_blueprint, url_prefix='/api/retiros_terreno')
     app.register_blueprint(roles_blueprint, url_prefix='/api/roles')
+    app.register_blueprint(tecnico_bloqueos_blueprint, url_prefix='/api/tecnico_bloqueos')
+    app.register_blueprint(revision_equipos_blueprint, url_prefix='/api/revision_equipos')
       
     
   # Ruta para servir archivos desde la carpeta `uploads`
@@ -273,6 +277,22 @@ def create_app():
         db.session.execute(
             text(
                 """
+                ALTER TABLE soporte
+                ADD COLUMN IF NOT EXISTS case_code VARCHAR(120)
+                """
+            )
+        )
+        db.session.execute(
+            text(
+                """
+                ALTER TABLE soporte
+                ADD COLUMN IF NOT EXISTS ismael_id_origen VARCHAR(80)
+                """
+            )
+        )
+        db.session.execute(
+            text(
+                """
                 ALTER TABLE encargados
                 ADD COLUMN IF NOT EXISTS user_id INTEGER
                 """
@@ -305,6 +325,44 @@ def create_app():
                     role_id INTEGER NOT NULL REFERENCES roles(id_role) ON DELETE CASCADE,
                     page_key VARCHAR(80) NOT NULL
                 )
+                """
+            )
+        )
+        db.session.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS soporte_case_tomados (
+                    id_case_tomado SERIAL PRIMARY KEY,
+                    case_code VARCHAR(120) UNIQUE,
+                    ismael_id VARCHAR(80),
+                    origen VARCHAR(40) NOT NULL DEFAULT 'ismael',
+                    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+                )
+                """
+            )
+        )
+        db.session.execute(
+            text(
+                """
+                ALTER TABLE soporte_case_tomados
+                ADD COLUMN IF NOT EXISTS ismael_id VARCHAR(80)
+                """
+            )
+        )
+        db.session.execute(
+            text(
+                """
+                ALTER TABLE soporte_case_tomados
+                ALTER COLUMN case_code DROP NOT NULL
+                """
+            )
+        )
+        db.session.execute(
+            text(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_soporte_case_tomados_ismael_id
+                ON soporte_case_tomados(ismael_id)
+                WHERE ismael_id IS NOT NULL
                 """
             )
         )
@@ -345,6 +403,65 @@ def create_app():
                 """
                 ALTER TABLE retiros_terreno_equipos
                 ADD COLUMN IF NOT EXISTS recibido_bodega BOOLEAN DEFAULT FALSE
+                """
+            )
+        )
+        db.session.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS tecnico_bloqueos (
+                    id_bloqueo SERIAL PRIMARY KEY,
+                    tecnico_id INTEGER NOT NULL REFERENCES encargados(id_encargado) ON DELETE CASCADE,
+                    tipo VARCHAR(30) NOT NULL,
+                    fecha_inicio DATE NOT NULL,
+                    fecha_fin DATE NOT NULL,
+                    motivo TEXT,
+                    estado VARCHAR(20) NOT NULL DEFAULT 'activo',
+                    created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+                )
+                """
+            )
+        )
+        db.session.execute(
+            text(
+                """
+                ALTER TABLE revision_equipos_detalles
+                ADD COLUMN IF NOT EXISTS disponible_bodega BOOLEAN DEFAULT FALSE
+                """
+            )
+        )
+        db.session.execute(
+            text(
+                """
+                ALTER TABLE revision_equipos_detalles
+                ADD COLUMN IF NOT EXISTS fecha_disponible_bodega TIMESTAMP
+                """
+            )
+        )
+        db.session.execute(
+            text(
+                """
+                ALTER TABLE revision_equipos_ordenes
+                ADD COLUMN IF NOT EXISTS checklist_json TEXT
+                """
+            )
+        )
+        db.session.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS revision_equipos_eventos (
+                    id_evento SERIAL PRIMARY KEY,
+                    revision_orden_id INTEGER NOT NULL REFERENCES revision_equipos_ordenes(id_revision_orden) ON DELETE CASCADE,
+                    revision_detalle_id INTEGER REFERENCES revision_equipos_detalles(id_revision_detalle) ON DELETE SET NULL,
+                    evento VARCHAR(60) NOT NULL,
+                    resultado VARCHAR(30),
+                    observacion TEXT,
+                    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                    user_nombre VARCHAR(120),
+                    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+                )
                 """
             )
         )

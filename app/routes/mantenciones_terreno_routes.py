@@ -111,11 +111,46 @@ def _normalize_checklist(value):
     return json.dumps(normalized, ensure_ascii=False)
 
 
+def _normalize_firmas_adicionales(value):
+    if value in (None, "", []):
+        return None
+    payload = value
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            payload = json.loads(text)
+        except Exception:
+            return None
+    if not isinstance(payload, list):
+        return None
+    normalizadas = []
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        nombre = str(item.get("nombre") or "").strip()
+        firma = str(item.get("firma") or "").strip()
+        if not nombre:
+            continue
+        normalizadas.append({"nombre": nombre, "firma": firma or None})
+    return json.dumps(normalizadas, ensure_ascii=False) if normalizadas else None
+
+
 def _serialize_mantencion(item):
     centro = item.centro
     cliente_nombre = centro.cliente.nombre if centro and centro.cliente else None
     correo_centro = item.correo_centro or (centro.correo_centro if centro else None)
     telefono_centro = item.telefono_centro or (centro.telefono if centro else None)
+    firmas_adicionales = []
+    try:
+        raw = getattr(item, "firmas_tecnicos_adicionales", None)
+        if raw:
+            parsed = json.loads(raw) if isinstance(raw, str) else raw
+            if isinstance(parsed, list):
+                firmas_adicionales = parsed
+    except Exception:
+        firmas_adicionales = []
     return {
         "id_mantencion_terreno": item.id_mantencion_terreno,
         "centro_id": item.centro_id,
@@ -130,6 +165,7 @@ def _serialize_mantencion(item):
         "firma_tecnico_1": item.firma_tecnico_1,
         "tecnico_2": item.tecnico_2,
         "firma_tecnico_2": item.firma_tecnico_2,
+        "firmas_tecnicos_adicionales": firmas_adicionales,
         "recepciona_nombre": item.recepciona_nombre,
         "recepciona_rut": item.recepciona_rut,
         "firma_recepciona": item.firma_recepciona,
@@ -214,7 +250,7 @@ def crear_mantencion_terreno():
         puntos_gps = _validate_gps_points(data.get("puntos_gps"))
         checklist_equipos = _normalize_checklist(data.get("checklist_equipos"))
 
-        item = MantencionTerreno(
+        create_kwargs = dict(
             centro_id=centro_id,
             fecha_ingreso=fecha_ingreso,
             fecha_salida=_parse_date(data.get("fecha_salida")),
@@ -239,6 +275,11 @@ def crear_mantencion_terreno():
             evidencia_foto=data.get("evidencia_foto"),
             checklist_equipos=checklist_equipos,
         )
+        if hasattr(MantencionTerreno, "firmas_tecnicos_adicionales"):
+            create_kwargs["firmas_tecnicos_adicionales"] = _normalize_firmas_adicionales(
+                data.get("firmas_tecnicos_adicionales")
+            )
+        item = MantencionTerreno(**create_kwargs)
 
         correo_centro = (data.get("correo_centro") or "").strip()
         telefono_centro = (data.get("telefono_centro") or "").strip()
@@ -295,8 +336,12 @@ def actualizar_mantencion_terreno(id_mantencion_terreno):
             data["puntos_gps"] = _validate_gps_points(data.get("puntos_gps"))
         if "checklist_equipos" in data:
             data["checklist_equipos"] = _normalize_checklist(data.get("checklist_equipos"))
+        if "firmas_tecnicos_adicionales" in data:
+            data["firmas_tecnicos_adicionales"] = _normalize_firmas_adicionales(
+                data.get("firmas_tecnicos_adicionales")
+            )
 
-        for campo in [
+        campos_update = [
             "correo_centro",
             "telefono_centro",
             "region",
@@ -317,7 +362,10 @@ def actualizar_mantencion_terreno(id_mantencion_terreno):
             "descripcion_trabajo",
             "evidencia_foto",
             "checklist_equipos",
-        ]:
+        ]
+        if hasattr(MantencionTerreno, "firmas_tecnicos_adicionales"):
+            campos_update.append("firmas_tecnicos_adicionales")
+        for campo in campos_update:
             if campo in data:
                 setattr(item, campo, data.get(campo))
 

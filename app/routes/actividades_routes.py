@@ -142,6 +142,34 @@ def _filtrar_actividades_por_nombre(actividades, nombre_usuario):
     return filtradas
 
 
+def _encargados_ids_por_nombre(nombre_usuario):
+    nombre_usuario_norm = _normalizar_texto(nombre_usuario)
+    if not nombre_usuario_norm:
+        return []
+    tokens_usuario = [t for t in nombre_usuario_norm.split(" ") if len(t) >= 3]
+    if not tokens_usuario:
+        return []
+
+    ids = []
+    for enc in Encargado.query.all():
+        nombre_enc = _normalizar_texto(enc.nombre_encargado)
+        if not nombre_enc:
+            continue
+        coincide = (
+            nombre_usuario_norm in nombre_enc
+            or nombre_enc in nombre_usuario_norm
+            or any(tok in nombre_enc for tok in tokens_usuario)
+        )
+        if coincide:
+            try:
+                enc_id = int(enc.id_encargado)
+            except Exception:
+                enc_id = 0
+            if enc_id and enc_id not in ids:
+                ids.append(enc_id)
+    return ids
+
+
 def _coerce_int_list(values):
     if values is None:
         return []
@@ -230,12 +258,18 @@ def obtener_actividades_mias():
     tecnico_ids = [int(usuario.id)]
     if perfil and perfil.id_encargado:
         tecnico_ids.append(int(perfil.id_encargado))
+    for enc_id in _encargados_ids_por_nombre(usuario.name):
+        if enc_id not in tecnico_ids:
+            tecnico_ids.append(enc_id)
 
     query = query.filter(
         or_(
             Actividad.tecnico_encargado.in_(tecnico_ids),
             Actividad.tecnico_ayudante.in_(tecnico_ids),
             Actividad.encargados.any(Encargado.id_encargado.in_(tecnico_ids)),
+            Actividad.encargados.any(Encargado.user_id == usuario.id),
+            Actividad.encargado_principal.has(Encargado.user_id == usuario.id),
+            Actividad.encargado_ayudante.has(Encargado.user_id == usuario.id),
         )
     )
     if estado:
@@ -245,17 +279,23 @@ def obtener_actividades_mias():
 
     actividades = query.order_by(Actividad.fecha_inicio.asc().nullslast(), Actividad.id_actividad.desc()).all()
 
-    # Camino principal: match por ids (encargado/user).
-    if actividades:
-        return jsonify([_serialize_actividad(actividad) for actividad in actividades]), 200
-
-    # Fallback: si no devolvio actividades, intenta por nombre del tecnico.
+    # Fallback adicional por nombre del tecnico (cubre registros legacy con ids inconsistentes).
     base_fallback = Actividad.query.order_by(
         Actividad.fecha_inicio.asc().nullslast(),
         Actividad.id_actividad.desc()
     ).all()
     filtradas = _filtrar_actividades_por_nombre(base_fallback, usuario.name)
-    return jsonify([_serialize_actividad(actividad) for actividad in filtradas]), 200
+
+    merged = []
+    vistos = set()
+    for actividad in [*actividades, *filtradas]:
+        aid = int(getattr(actividad, "id_actividad", 0) or 0)
+        if not aid or aid in vistos:
+            continue
+        vistos.add(aid)
+        merged.append(actividad)
+
+    return jsonify([_serialize_actividad(actividad) for actividad in merged]), 200
 
 # Actualizar actividad
 @actividades_blueprint.route('/<int:id_actividad>', methods=['PUT'])

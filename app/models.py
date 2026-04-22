@@ -149,6 +149,24 @@ class Encargado(db.Model):
     especialidad = db.Column(db.String(100), nullable=True)
     licencia_conducir = db.Column(db.Boolean, nullable=True)
     user = db.relationship('User', backref=db.backref('perfil_tecnico', uselist=False))
+
+
+class TecnicoBloqueo(db.Model):
+    __tablename__ = 'tecnico_bloqueos'
+
+    id_bloqueo = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    tecnico_id = db.Column(db.Integer, db.ForeignKey('encargados.id_encargado', ondelete='CASCADE'), nullable=False, index=True)
+    tipo = db.Column(db.String(30), nullable=False)  # vacaciones | licencia | permiso
+    fecha_inicio = db.Column(db.Date, nullable=False)
+    fecha_fin = db.Column(db.Date, nullable=False)
+    motivo = db.Column(db.Text, nullable=True)
+    estado = db.Column(db.String(20), nullable=False, default='activo')  # activo | anulado
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=db.func.now())
+    updated_at = db.Column(db.DateTime, nullable=False, default=db.func.now(), onupdate=db.func.now())
+
+    tecnico = db.relationship('Encargado', backref=db.backref('bloqueos', cascade='all, delete-orphan'))
+    created_by = db.relationship('User', foreign_keys=[created_by_user_id], backref='bloqueos_tecnicos_creados')
     
  # Tabla de asociación para la relación muchos a muchos
 actividades_encargados = db.Table('actividades_encargados',
@@ -368,6 +386,8 @@ class Soporte(db.Model):
     origen = db.Column(db.String(20), nullable=False, default='cliente')  # 'cliente' | 'orca'
     estado = db.Column(db.String(20), default='pendiente')  # <---
     fecha_cierre = db.Column(db.Date, nullable=True)  
+    case_code = db.Column(db.String(120), nullable=True)
+    ismael_id_origen = db.Column(db.String(80), nullable=True)
 
     # Relación con la tabla centros
     centro = db.relationship('Centro', backref=db.backref('soportes', cascade="all, delete-orphan"))
@@ -379,6 +399,40 @@ class Soporte(db.Model):
             f"categoria_falla='{self.categoria_falla}', cambio_equipo={self.cambio_equipo}, "
             f"equipo_cambiado='{self.equipo_cambiado}', origen='{self.origen}', estado='{self.estado}', fecha_cierre={self.fecha_cierre})>"
         )
+
+
+class Ismael(db.Model):
+    __tablename__ = 'ismael'
+
+    id = db.Column(db.String(64), primary_key=True)
+    case_code = db.Column(db.Text, nullable=True)
+    centro = db.Column(db.Text, nullable=True)
+    hora_llegada = db.Column(db.DateTime(timezone=True), nullable=True)
+    hora_envio_correo = db.Column(db.DateTime(timezone=True), nullable=True)
+    correo = db.Column(db.Text, nullable=True)
+    analisis = db.Column(db.Text, nullable=True)
+    sugerencias = db.Column(db.Text, nullable=True)
+    respuesta_final = db.Column(db.Text, nullable=True)
+    respuesta_enviada = db.Column(db.Boolean, nullable=False, default=False)
+    correo_remitente = db.Column(db.Text, nullable=True)
+    correos_destinatarios = db.Column(db.Text, nullable=True)
+    correos_copia = db.Column(db.Text, nullable=True)
+    asunto = db.Column(db.Text, nullable=True)
+    falla_especifica = db.Column(db.Text, nullable=True)
+    estado = db.Column(db.Text, nullable=True)
+    accion_pendiente = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class SoporteCaseTomado(db.Model):
+    __tablename__ = 'soporte_case_tomados'
+
+    id_case_tomado = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    case_code = db.Column(db.String(120), nullable=True, unique=True, index=True)
+    ismael_id = db.Column(db.String(80), nullable=True)
+    origen = db.Column(db.String(40), nullable=False, default='ismael')
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=datetime.utcnow)
 
 
 class MantencionPreventivaRevision(db.Model):
@@ -452,6 +506,7 @@ class PermisoTrabajo(db.Model):
     firma_tecnico_1 = db.Column(db.Text, nullable=True)
     tecnico_2 = db.Column(db.String(120), nullable=True)
     firma_tecnico_2 = db.Column(db.Text, nullable=True)
+    firmas_tecnicos_adicionales = db.Column(db.Text, nullable=True)
     recepciona_nombre = db.Column(db.String(120), nullable=True)
     recepciona_rut = db.Column(db.String(20), nullable=True)
     firma_recepciona = db.Column(db.Text, nullable=True)
@@ -490,6 +545,7 @@ class MantencionTerreno(db.Model):
     firma_tecnico_1 = db.Column(db.Text, nullable=True)
     tecnico_2 = db.Column(db.String(120), nullable=True)
     firma_tecnico_2 = db.Column(db.Text, nullable=True)
+    firmas_tecnicos_adicionales = db.Column(db.Text, nullable=True)
     recepciona_nombre = db.Column(db.String(120), nullable=True)
     recepciona_rut = db.Column(db.String(20), nullable=True)
     firma_recepciona = db.Column(db.Text, nullable=True)
@@ -614,6 +670,107 @@ class RetiroTerrenoEquipo(db.Model):
             f"<RetiroTerrenoEquipo(id_retiro_equipo={self.id_retiro_equipo}, "
             f"retiro_terreno_id={self.retiro_terreno_id}, equipo='{self.equipo_nombre}', retirado={self.retirado})>"
         )
+
+
+class RevisionEquipoOrden(db.Model):
+    __tablename__ = 'revision_equipos_ordenes'
+
+    id_revision_orden = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    retiro_terreno_id = db.Column(
+        db.Integer,
+        db.ForeignKey('retiros_terreno.id_retiro_terreno', ondelete="SET NULL"),
+        nullable=True,
+        index=True
+    )
+    centro_id = db.Column(db.BigInteger, db.ForeignKey('centros.id_centro', ondelete="SET NULL"), nullable=True, index=True)
+    area = db.Column(db.String(30), nullable=False, default='camaras')  # camaras | pc | energia
+    estado = db.Column(db.String(30), nullable=False, default='pendiente')  # pendiente | en_revision | diagnosticado | cerrado
+    asignado_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)
+    asignado_nombre = db.Column(db.String(120), nullable=True)
+    creado_por_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    fecha_asignacion = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    fecha_inicio_revision = db.Column(db.DateTime, nullable=True)
+    fecha_cierre = db.Column(db.DateTime, nullable=True)
+    observacion = db.Column(db.Text, nullable=True)
+    checklist_json = db.Column(db.Text, nullable=True)
+
+    retiro = db.relationship('RetiroTerreno', backref='ordenes_revision')
+    centro = db.relationship('Centro', backref='ordenes_revision_equipos')
+    asignado_user = db.relationship('User', foreign_keys=[asignado_user_id], backref='ordenes_revision_asignadas')
+    creado_por_user = db.relationship('User', foreign_keys=[creado_por_user_id], backref='ordenes_revision_creadas')
+
+    def __repr__(self):
+        return (
+            f"<RevisionEquipoOrden(id={self.id_revision_orden}, area='{self.area}', estado='{self.estado}', "
+            f"centro_id={self.centro_id})>"
+        )
+
+
+class RevisionEquipoDetalle(db.Model):
+    __tablename__ = 'revision_equipos_detalles'
+
+    id_revision_detalle = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    revision_orden_id = db.Column(
+        db.Integer,
+        db.ForeignKey('revision_equipos_ordenes.id_revision_orden', ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+    retiro_equipo_id = db.Column(
+        db.Integer,
+        db.ForeignKey('retiros_terreno_equipos.id_retiro_equipo', ondelete="SET NULL"),
+        nullable=True,
+        index=True
+    )
+    equipo_nombre = db.Column(db.String(120), nullable=False)
+    numero_serie = db.Column(db.String(60), nullable=True)
+    codigo = db.Column(db.String(60), nullable=True)
+    checklist_ok = db.Column(db.Boolean, nullable=False, default=False)
+    diagnostico = db.Column(db.Text, nullable=True)
+    resultado = db.Column(db.String(30), nullable=True)  # operativo | reparable | no_reparable | requiere_repuesto
+    disponible_bodega = db.Column(db.Boolean, nullable=False, default=False)
+    fecha_disponible_bodega = db.Column(db.DateTime, nullable=True)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    orden = db.relationship('RevisionEquipoOrden', backref=db.backref('detalles', cascade="all, delete-orphan"))
+    retiro_equipo = db.relationship('RetiroTerrenoEquipo', backref='revision_detalles')
+
+    def __repr__(self):
+        return (
+            f"<RevisionEquipoDetalle(id={self.id_revision_detalle}, orden={self.revision_orden_id}, "
+            f"equipo='{self.equipo_nombre}', resultado='{self.resultado}')>"
+        )
+
+
+class RevisionEquipoEvento(db.Model):
+    __tablename__ = 'revision_equipos_eventos'
+
+    id_evento = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    revision_orden_id = db.Column(
+        db.Integer,
+        db.ForeignKey('revision_equipos_ordenes.id_revision_orden', ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+    revision_detalle_id = db.Column(
+        db.Integer,
+        db.ForeignKey('revision_equipos_detalles.id_revision_detalle', ondelete="SET NULL"),
+        nullable=True,
+        index=True
+    )
+    evento = db.Column(db.String(60), nullable=False)  # diagnostico | devuelto_bodega | reasignado
+    resultado = db.Column(db.String(30), nullable=True)
+    observacion = db.Column(db.Text, nullable=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    user_nombre = db.Column(db.String(120), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    orden = db.relationship('RevisionEquipoOrden', backref=db.backref('eventos', cascade="all, delete-orphan"))
+    detalle = db.relationship('RevisionEquipoDetalle', backref='eventos')
+    user = db.relationship('User', backref='revision_eventos')
+
+    def __repr__(self):
+        return f"<RevisionEquipoEvento(id={self.id_evento}, evento='{self.evento}', orden={self.revision_orden_id})>"
 
 
 # Tabla Armados técnicos
