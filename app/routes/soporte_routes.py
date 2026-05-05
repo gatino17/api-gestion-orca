@@ -26,6 +26,15 @@ def _registrar_case_tomado(case_code=None, ismael_id=None):
     db.session.add(SoporteCaseTomado(case_code=code, ismael_id=None, origen='ismael'))
 
 
+def _ismael_id_ya_tomado(ismael_id=None):
+    source_id = str(ismael_id or "").strip()
+    if not source_id:
+        return False
+    if SoporteCaseTomado.query.filter_by(ismael_id=source_id).first():
+        return True
+    return Soporte.query.filter_by(ismael_id_origen=source_id).first() is not None
+
+
 def _parse_date(value):
     if value in (None, ""):
         return None
@@ -42,6 +51,9 @@ def crear_soporte():
     origen = str(data.get('origen', 'cliente')).lower().strip()
     if origen not in ('cliente', 'orca'):
         return jsonify({"error": "Origen invalido. Use 'cliente' u 'orca'."}), 400
+    ismael_id_origen = data.get('ismael_id_origen')
+    if _ismael_id_ya_tomado(ismael_id_origen):
+        return jsonify({"error": "Este caso de ismael ya fue tomado para soporte."}), 409
 
     nuevo_soporte = Soporte(
         centro_id=data.get('centro_id'),
@@ -56,7 +68,7 @@ def crear_soporte():
         estado=data.get('estado', 'pendiente'),
         fecha_cierre=_parse_date(data.get('fecha_cierre')),
         case_code=data.get('case_code'),
-        ismael_id_origen=data.get('ismael_id_origen')
+        ismael_id_origen=ismael_id_origen
     )
 
     db.session.add(nuevo_soporte)
@@ -108,6 +120,11 @@ def obtener_casos_ismael():
             for item in SoporteCaseTomado.query.all()
             if str(item.ismael_id or "").strip()
         }
+        ids_tomados.update(
+            str(item.ismael_id_origen).strip().lower()
+            for item in Soporte.query.with_entities(Soporte.ismael_id_origen).all()
+            if str(item.ismael_id_origen or "").strip()
+        )
 
         rows = (
             Ismael.query

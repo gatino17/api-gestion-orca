@@ -43,6 +43,7 @@ from .routes.retiros_terreno_routes import retiros_terreno_blueprint
 from .routes.roles_routes import roles_blueprint
 from .routes.tecnico_bloqueos_routes import tecnico_bloqueos_blueprint
 from .routes.revision_equipos_routes import revision_equipos_blueprint
+from .routes.rendiciones_routes import rendiciones_blueprint
 from .permissions import seed_default_roles
 
 
@@ -121,6 +122,7 @@ def create_app():
     app.register_blueprint(roles_blueprint, url_prefix='/api/roles')
     app.register_blueprint(tecnico_bloqueos_blueprint, url_prefix='/api/tecnico_bloqueos')
     app.register_blueprint(revision_equipos_blueprint, url_prefix='/api/revision_equipos')
+    app.register_blueprint(rendiciones_blueprint, url_prefix='/api/rendiciones')
       
     
   # Ruta para servir archivos desde la carpeta `uploads`
@@ -287,6 +289,14 @@ def create_app():
                 """
                 ALTER TABLE soporte
                 ADD COLUMN IF NOT EXISTS ismael_id_origen VARCHAR(80)
+                """
+            )
+        )
+        db.session.execute(
+            text(
+                """
+                ALTER TABLE users
+                ADD COLUMN IF NOT EXISTS supervisor_areas TEXT
                 """
             )
         )

@@ -1,8 +1,9 @@
 import os
 from flask import Blueprint, request, jsonify, send_file
 from datetime import datetime
+from decimal import Decimal
 from werkzeug.utils import secure_filename
-from ..models import Inventario, Centro, db
+from ..models import Inventario, Centro, BodegaInventarioEquipo, db
 
 # Crear el blueprint
 inventarios_blueprint = Blueprint('inventarios', __name__)
@@ -14,6 +15,35 @@ UPLOAD_FOLDER = os.path.join(os.getcwd(), 'uploads/inventarios_docs')
 # Crear el directorio de uploads si no existe
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+
+def _parse_date(value):
+    if not value:
+        return None
+    try:
+        return datetime.strptime(str(value)[:10], "%Y-%m-%d").date()
+    except Exception:
+        return None
+
+
+def _serialize_bodega_equipo(item: BodegaInventarioEquipo):
+    return {
+        "id_bodega_equipo": item.id_bodega_equipo,
+        "numero_serie": item.numero_serie,
+        "codigo": item.codigo,
+        "equipo_nombre": item.equipo_nombre,
+        "descripcion_producto": item.descripcion_producto,
+        "fecha_ingreso": item.fecha_ingreso.isoformat() if item.fecha_ingreso else None,
+        "orden_compra": item.orden_compra,
+        "valor": float(item.valor) if item.valor is not None else None,
+        "modelo": item.modelo,
+        "estado_equipo": item.estado_equipo,
+        "ubicacion": item.ubicacion,
+        "imagen_base64": item.imagen_base64,
+        "imagen_nombre": item.imagen_nombre,
+        "created_at": item.created_at.isoformat() if item.created_at else None,
+        "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+    }
 
 def is_allowed_file(filename):
     """Verifica si la extensión del archivo está permitida."""
@@ -143,6 +173,143 @@ def eliminar_inventarios_por_centro(centro_id):
         db.session.commit()
         
         return jsonify({"message": "Todos los inventarios del centro eliminados exitosamente."}), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
+
+@inventarios_blueprint.route('/bodega_equipos', methods=['GET'])
+def listar_bodega_equipos():
+    try:
+        q = str(request.args.get('q', '')).strip().lower()
+        rows = BodegaInventarioEquipo.query.order_by(BodegaInventarioEquipo.updated_at.desc(), BodegaInventarioEquipo.id_bodega_equipo.desc()).all()
+        data = [_serialize_bodega_equipo(x) for x in rows]
+        if q:
+            data = [
+                x for x in data
+                if q in " ".join([
+                    str(x.get("numero_serie") or ""),
+                    str(x.get("codigo") or ""),
+                    str(x.get("equipo_nombre") or ""),
+                    str(x.get("modelo") or ""),
+                    str(x.get("estado_equipo") or ""),
+                    str(x.get("ubicacion") or ""),
+                ]).lower()
+            ]
+        return jsonify(data), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@inventarios_blueprint.route('/bodega_equipos', methods=['POST'])
+def crear_bodega_equipos():
+    payload = request.get_json() or {}
+    items = payload.get("items") if isinstance(payload.get("items"), list) else [payload]
+    if not items:
+        return jsonify({"error": "No hay items para crear"}), 400
+    try:
+        creados = []
+        for raw in items:
+            numero_serie = str(raw.get("numero_serie") or "").strip()
+            codigo = str(raw.get("codigo") or "").strip()
+            equipo_nombre = str(raw.get("equipo_nombre") or "").strip()
+            if not numero_serie or not codigo or not equipo_nombre:
+                return jsonify({"error": "numero_serie, codigo y equipo_nombre son obligatorios"}), 400
+
+            existe_codigo = BodegaInventarioEquipo.query.filter(db.func.lower(BodegaInventarioEquipo.codigo) == codigo.lower()).first()
+            if existe_codigo:
+                return jsonify({"error": f"El código ya existe: {codigo}"}), 400
+
+            item = BodegaInventarioEquipo(
+                numero_serie=numero_serie,
+                codigo=codigo,
+                equipo_nombre=equipo_nombre,
+                descripcion_producto=raw.get("descripcion_producto"),
+                fecha_ingreso=_parse_date(raw.get("fecha_ingreso")),
+                orden_compra=raw.get("orden_compra"),
+                valor=Decimal(str(raw.get("valor"))) if raw.get("valor") not in (None, "") else None,
+                modelo=raw.get("modelo"),
+                estado_equipo=str(raw.get("estado_equipo") or "Operativo"),
+                ubicacion=str(raw.get("ubicacion") or "Bodega central"),
+                imagen_base64=raw.get("imagen_base64"),
+                imagen_nombre=raw.get("imagen_nombre"),
+            )
+            db.session.add(item)
+            creados.append(item)
+
+        db.session.commit()
+        return jsonify({"message": "Equipos creados", "items": [_serialize_bodega_equipo(x) for x in creados]}), 201
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
+
+@inventarios_blueprint.route('/bodega_equipos/<int:id_bodega_equipo>', methods=['PUT'])
+def actualizar_bodega_equipo(id_bodega_equipo):
+    data = request.get_json() or {}
+    item = BodegaInventarioEquipo.query.get(id_bodega_equipo)
+    if not item:
+        return jsonify({"error": "Equipo no encontrado"}), 404
+    try:
+        if "numero_serie" in data:
+            serie = str(data.get("numero_serie") or "").strip()
+            if not serie:
+                return jsonify({"error": "numero_serie es obligatorio"}), 400
+            item.numero_serie = serie
+
+        if "codigo" in data:
+            codigo = str(data.get("codigo") or "").strip()
+            if not codigo:
+                return jsonify({"error": "codigo es obligatorio"}), 400
+            dup = BodegaInventarioEquipo.query.filter(
+                db.func.lower(BodegaInventarioEquipo.codigo) == codigo.lower(),
+                BodegaInventarioEquipo.id_bodega_equipo != item.id_bodega_equipo
+            ).first()
+            if dup:
+                return jsonify({"error": f"El código ya existe: {codigo}"}), 400
+            item.codigo = codigo
+
+        if "equipo_nombre" in data:
+            equipo_nombre = str(data.get("equipo_nombre") or "").strip()
+            if not equipo_nombre:
+                return jsonify({"error": "equipo_nombre es obligatorio"}), 400
+            item.equipo_nombre = equipo_nombre
+
+        if "descripcion_producto" in data:
+            item.descripcion_producto = data.get("descripcion_producto")
+        if "fecha_ingreso" in data:
+            item.fecha_ingreso = _parse_date(data.get("fecha_ingreso"))
+        if "orden_compra" in data:
+            item.orden_compra = data.get("orden_compra")
+        if "valor" in data:
+            item.valor = Decimal(str(data.get("valor"))) if data.get("valor") not in (None, "") else None
+        if "modelo" in data:
+            item.modelo = data.get("modelo")
+        if "estado_equipo" in data:
+            item.estado_equipo = str(data.get("estado_equipo") or "Operativo")
+        if "ubicacion" in data:
+            item.ubicacion = str(data.get("ubicacion") or "Bodega central")
+        if "imagen_base64" in data:
+            item.imagen_base64 = data.get("imagen_base64")
+        if "imagen_nombre" in data:
+            item.imagen_nombre = data.get("imagen_nombre")
+
+        db.session.commit()
+        return jsonify({"message": "Equipo actualizado", "item": _serialize_bodega_equipo(item)}), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
+
+@inventarios_blueprint.route('/bodega_equipos/<int:id_bodega_equipo>', methods=['DELETE'])
+def eliminar_bodega_equipo(id_bodega_equipo):
+    item = BodegaInventarioEquipo.query.get(id_bodega_equipo)
+    if not item:
+        return jsonify({"error": "Equipo no encontrado"}), 404
+    try:
+        db.session.delete(item)
+        db.session.commit()
+        return jsonify({"message": "Equipo eliminado"}), 200
     except Exception as e:
         db.session.rollback()
         return jsonify({"error": str(e)}), 500

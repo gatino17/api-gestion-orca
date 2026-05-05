@@ -13,6 +13,7 @@ class User(db.Model):
     email = db.Column(db.String(120), unique=True, nullable=False)
     password_hash = db.Column(db.String(255), nullable=False)
     rol = db.Column(db.String(50), nullable=False)
+    supervisor_areas = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     # Método para hashear la contraseña
@@ -257,6 +258,29 @@ class Inventario(db.Model):
         return f"<Inventario(id_inventario={self.id_inventario}, centro_id={self.centro_id}, documento={self.documento})>"
 
 
+class BodegaInventarioEquipo(db.Model):
+    __tablename__ = 'bodega_inventario_equipos'
+
+    id_bodega_equipo = db.Column(db.Integer, primary_key=True)
+    numero_serie = db.Column(db.String(120), nullable=False, index=True)
+    codigo = db.Column(db.String(120), nullable=False, index=True)
+    equipo_nombre = db.Column(db.String(160), nullable=False)
+    descripcion_producto = db.Column(db.Text, nullable=True)
+    fecha_ingreso = db.Column(db.Date, nullable=True)
+    orden_compra = db.Column(db.String(120), nullable=True)
+    valor = db.Column(db.Numeric(12, 2), nullable=True)
+    modelo = db.Column(db.String(120), nullable=True)
+    estado_equipo = db.Column(db.String(60), nullable=False, default='Operativo')
+    ubicacion = db.Column(db.String(120), nullable=False, default='Bodega central')
+    imagen_base64 = db.Column(db.Text, nullable=True)
+    imagen_nombre = db.Column(db.String(255), nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=db.func.now())
+    updated_at = db.Column(db.DateTime, nullable=False, default=db.func.now(), onupdate=db.func.now())
+
+    def __repr__(self):
+        return f"<BodegaInventarioEquipo(id={self.id_bodega_equipo}, codigo={self.codigo}, serie={self.numero_serie})>"
+
+
 #tabla traslado
 class Traslado(db.Model):
     __tablename__ = 'traslados'
@@ -433,6 +457,48 @@ class SoporteCaseTomado(db.Model):
     ismael_id = db.Column(db.String(80), nullable=True)
     origen = db.Column(db.String(40), nullable=False, default='ismael')
     created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+
+class RendicionGasto(db.Model):
+    __tablename__ = 'rendiciones_gastos'
+
+    id_rendicion = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    tecnico_user_id = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True)
+    tecnico_nombre = db.Column(db.String(120), nullable=True)
+    cliente_id = db.Column(db.Integer, db.ForeignKey('clientes.id_cliente', ondelete='SET NULL'), nullable=True, index=True)
+    centro_id = db.Column(db.BigInteger, db.ForeignKey('centros.id_centro', ondelete='SET NULL'), nullable=True, index=True)
+    actividad_tipo = db.Column(db.String(30), nullable=True, index=True)  # instalacion | mantencion | retiro | soporte | otro
+    actividad_id = db.Column(db.Integer, nullable=True, index=True)
+    categoria = db.Column(db.String(60), nullable=True)
+    descripcion = db.Column(db.Text, nullable=False)
+    monto = db.Column(db.Numeric(12, 2), nullable=False, default=0)
+    medio_pago = db.Column(db.String(30), nullable=True)  # efectivo | transferencia | tarjeta | otro
+    fecha_gasto = db.Column(db.Date, nullable=False, index=True)
+    estado = db.Column(db.String(20), nullable=False, default='borrador', index=True)  # borrador | enviado
+    adjuntos_json = db.Column(db.Text, nullable=True)  # json array data-url/base64
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    tecnico = db.relationship('User', backref='rendiciones_gastos')
+    cliente = db.relationship('Cliente', backref='rendiciones_gastos')
+    centro = db.relationship('Centro', backref='rendiciones_gastos')
+
+
+class RendicionAbono(db.Model):
+    __tablename__ = 'rendiciones_abonos'
+
+    id_abono = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    tecnico_user_id = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True)
+    tecnico_nombre = db.Column(db.String(120), nullable=True, index=True)
+    fecha_abono = db.Column(db.Date, nullable=False, index=True)
+    monto = db.Column(db.Numeric(12, 2), nullable=False, default=0)
+    transferido_por = db.Column(db.String(120), nullable=False)
+    referencia = db.Column(db.String(120), nullable=True)
+    observacion = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    tecnico = db.relationship('User', backref='rendiciones_abonos')
 
 
 class MantencionPreventivaRevision(db.Model):

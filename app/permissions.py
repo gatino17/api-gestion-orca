@@ -10,6 +10,7 @@ AVAILABLE_PAGES = [
     {"key": "informes_centros", "label": "Informes centros", "route": "/informes-centros"},
     {"key": "bodega_retiros", "label": "Bodega retiros", "route": "/bodega-retiros"},
     {"key": "revision_equipos", "label": "Revision equipos", "route": "/revision-equipos"},
+    {"key": "rendiciones", "label": "Rendiciones", "route": "/rendiciones"},
     {"key": "armados", "label": "Armado tecnico", "route": "/armados"},
     {"key": "calendario", "label": "Calendario", "route": "/calendario"},
     {"key": "historial_trabajos", "label": "Historial de trabajos", "route": "/historial-trabajos"},
@@ -34,6 +35,7 @@ DEFAULT_ROLE_PAGES = {
         "mantencion_preventiva",
         "informes_centros",
         "revision_equipos",
+        "rendiciones",
         "calendario",
         "historial_trabajos",
         "datos_ip",
@@ -47,6 +49,7 @@ DEFAULT_ROLE_PAGES = {
         "informes_centros",
         "bodega_retiros",
         "revision_equipos",
+        "rendiciones",
         "armados",
         "calendario",
         "historial_trabajos",
@@ -57,7 +60,7 @@ DEFAULT_ROLE_PAGES = {
         "registrosdocumentos",
         "tecnicos",
     ],
-    "finanzas": ["inicio", "consulta_centro", "historial_centro"],
+    "finanzas": ["inicio", "consulta_centro", "historial_centro", "rendiciones"],
 }
 
 

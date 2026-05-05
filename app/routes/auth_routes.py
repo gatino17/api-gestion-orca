@@ -2,6 +2,7 @@ from flask import Blueprint, request, jsonify
 from werkzeug.security import check_password_hash
 import jwt
 import datetime
+import json
 from sqlalchemy import func
 
 from ..models import User
@@ -10,6 +11,24 @@ from ..permissions import get_pages_for_role_name
 
 auth_blueprint = Blueprint('auth', __name__)
 SECRET_KEY = "remoto753524"
+
+
+def _parse_supervisor_areas(user):
+    raw = getattr(user, 'supervisor_areas', None)
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw) if isinstance(raw, str) else raw
+    except Exception:
+        parsed = []
+    if not isinstance(parsed, (list, tuple)):
+        return []
+    out = []
+    for item in parsed:
+        val = str(item or '').strip().lower()
+        if val in ('camaras', 'pc', 'energia') and val not in out:
+            out.append(val)
+    return out
 
 
 @auth_blueprint.route('/login', methods=['POST'])
@@ -31,6 +50,7 @@ def login():
             'name': user.name,
             'rol': user.rol,
             'paginas': get_pages_for_role_name(user.rol),
+            'supervisor_areas': _parse_supervisor_areas(user),
             'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=1),
         },
         SECRET_KEY,
