@@ -738,6 +738,35 @@ class RetiroTerrenoEquipo(db.Model):
         )
 
 
+class LevantamientoTerreno(db.Model):
+    __tablename__ = 'levantamientos_terreno'
+
+    id_levantamiento_terreno = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    centro_id = db.Column(db.BigInteger, db.ForeignKey('centros.id_centro', ondelete="CASCADE"), nullable=False, index=True)
+    actividad_id = db.Column(db.Integer, nullable=True, index=True)
+    fecha_levantamiento = db.Column(db.Date, nullable=False, index=True)
+    region = db.Column(db.String(120), nullable=True)
+    localidad = db.Column(db.String(120), nullable=True)
+    codigo_ponton = db.Column(db.String(180), nullable=True)
+    resumen = db.Column(db.Text, nullable=True)
+    observaciones = db.Column(db.Text, nullable=True)
+    medicion_voltaje = db.Column(db.String(50), nullable=True)
+    medicion_corriente = db.Column(db.String(50), nullable=True)
+    medicion_potencia = db.Column(db.String(50), nullable=True)
+    fotos = db.Column(db.Text, nullable=True)
+    estado = db.Column(db.String(30), nullable=False, default='finalizado')
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    centro = db.relationship('Centro', backref=db.backref('levantamientos_terreno', cascade="all, delete-orphan"))
+
+    def __repr__(self):
+        return (
+            f"<LevantamientoTerreno(id_levantamiento_terreno={self.id_levantamiento_terreno}, "
+            f"centro_id={self.centro_id}, fecha_levantamiento={self.fecha_levantamiento})>"
+        )
+
+
 class RevisionEquipoOrden(db.Model):
     __tablename__ = 'revision_equipos_ordenes'
 

@@ -70,7 +70,11 @@ def get_pages_for_role_name(role_name):
         return []
     role = Role.query.filter(Role.nombre.ilike(role_name)).first()
     if role:
-        return sorted({(row.page_key or "").strip() for row in (role.pages or []) if row.page_key})
+        pages_db = {(row.page_key or "").strip() for row in (role.pages or []) if row.page_key}
+        pages_base = set(DEFAULT_ROLE_PAGES.get(role_name, []))
+        # Mantiene permisos base por rol (ej. operaciones -> centros), aun si el rol en BD
+        # fue creado/actualizado sin todas las paginas esperadas.
+        return sorted(pages_db.union(pages_base))
     return DEFAULT_ROLE_PAGES.get(role_name, [])
 
 

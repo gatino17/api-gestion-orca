@@ -40,6 +40,7 @@ from .routes.actas_entrega_routes import actas_entrega_blueprint
 from .routes.permisos_trabajo_routes import permisos_trabajo_blueprint
 from .routes.mantenciones_terreno_routes import mantenciones_terreno_blueprint
 from .routes.retiros_terreno_routes import retiros_terreno_blueprint
+from .routes.levantamientos_terreno_routes import levantamientos_terreno_blueprint
 from .routes.roles_routes import roles_blueprint
 from .routes.tecnico_bloqueos_routes import tecnico_bloqueos_blueprint
 from .routes.revision_equipos_routes import revision_equipos_blueprint
@@ -119,6 +120,7 @@ def create_app():
     app.register_blueprint(permisos_trabajo_blueprint, url_prefix='/api/permisos_trabajo')
     app.register_blueprint(mantenciones_terreno_blueprint, url_prefix='/api/mantenciones_terreno')
     app.register_blueprint(retiros_terreno_blueprint, url_prefix='/api/retiros_terreno')
+    app.register_blueprint(levantamientos_terreno_blueprint, url_prefix='/api/levantamientos_terreno')
     app.register_blueprint(roles_blueprint, url_prefix='/api/roles')
     app.register_blueprint(tecnico_bloqueos_blueprint, url_prefix='/api/tecnico_bloqueos')
     app.register_blueprint(revision_equipos_blueprint, url_prefix='/api/revision_equipos')
