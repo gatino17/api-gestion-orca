@@ -477,6 +477,54 @@ def create_app():
                 """
             )
         )
+        db.session.execute(
+            text(
+                """
+                ALTER TABLE rendiciones_gastos
+                ADD COLUMN IF NOT EXISTS edicion_solicitada BOOLEAN DEFAULT FALSE
+                """
+            )
+        )
+        db.session.execute(
+            text(
+                """
+                ALTER TABLE rendiciones_gastos
+                ADD COLUMN IF NOT EXISTS edicion_motivo TEXT
+                """
+            )
+        )
+        db.session.execute(
+            text(
+                """
+                ALTER TABLE rendiciones_gastos
+                ADD COLUMN IF NOT EXISTS edicion_respuesta TEXT
+                """
+            )
+        )
+        db.session.execute(
+            text(
+                """
+                ALTER TABLE rendiciones_gastos
+                ADD COLUMN IF NOT EXISTS edicion_solicitada_at TIMESTAMP
+                """
+            )
+        )
+        db.session.execute(
+            text(
+                """
+                ALTER TABLE rendiciones_gastos
+                ADD COLUMN IF NOT EXISTS edicion_resuelta_at TIMESTAMP
+                """
+            )
+        )
+        db.session.execute(
+            text(
+                """
+                ALTER TABLE rendiciones_gastos
+                ADD COLUMN IF NOT EXISTS editable_hasta TIMESTAMP
+                """
+            )
+        )
         seed_default_roles(db)
         db.session.commit()
 

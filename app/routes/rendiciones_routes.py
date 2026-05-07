@@ -1,5 +1,5 @@
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 import json
 import re
@@ -72,6 +72,12 @@ def _serialize_rendicion(item: RendicionGasto):
         "medio_pago": item.medio_pago,
         "fecha_gasto": item.fecha_gasto.isoformat() if item.fecha_gasto else None,
         "estado": item.estado,
+        "edicion_solicitada": bool(item.edicion_solicitada),
+        "edicion_motivo": item.edicion_motivo,
+        "edicion_respuesta": item.edicion_respuesta,
+        "edicion_solicitada_at": item.edicion_solicitada_at.isoformat() if item.edicion_solicitada_at else None,
+        "edicion_resuelta_at": item.edicion_resuelta_at.isoformat() if item.edicion_resuelta_at else None,
+        "editable_hasta": item.editable_hasta.isoformat() if item.editable_hasta else None,
         "adjuntos": _safe_json_array(item.adjuntos_json),
         "created_at": item.created_at.isoformat() if item.created_at else None,
         "updated_at": item.updated_at.isoformat() if item.updated_at else None,
@@ -290,6 +296,15 @@ def crear_rendicion():
 def actualizar_rendicion(id_rendicion):
     item = RendicionGasto.query.get_or_404(id_rendicion)
     data = request.get_json() or {}
+    estado_actual = str(item.estado or "").strip().lower()
+    if estado_actual == "enviado":
+        return jsonify({"error": "Rendicion enviada. Debes solicitar edicion para modificar."}), 400
+    if estado_actual == "edicion_solicitada":
+        return jsonify({"error": "La solicitud de edicion esta pendiente de aprobacion."}), 400
+    if estado_actual == "edicion_rechazada":
+        return jsonify({"error": "La solicitud de edicion fue rechazada."}), 400
+    if estado_actual == "edicion_autorizada" and item.editable_hasta and datetime.utcnow() > item.editable_hasta:
+        return jsonify({"error": "La autorizacion de edicion expiro. Solicita nuevamente."}), 400
 
     if "tecnico_user_id" in data:
         item.tecnico_user_id = data.get("tecnico_user_id")
@@ -320,6 +335,9 @@ def actualizar_rendicion(id_rendicion):
         item.estado = str(data.get("estado") or "borrador").strip().lower()
     if "adjuntos" in data:
         item.adjuntos_json = json.dumps(_safe_json_array(data.get("adjuntos")), ensure_ascii=False)
+    if item.estado == "edicion_autorizada":
+        item.estado = "borrador"
+    item.edicion_solicitada = False
 
     db.session.commit()
     return jsonify({"message": "Rendicion actualizada", "rendicion": _serialize_rendicion(item)}), 200
@@ -329,5 +347,60 @@ def actualizar_rendicion(id_rendicion):
 def enviar_rendicion(id_rendicion):
     item = RendicionGasto.query.get_or_404(id_rendicion)
     item.estado = "enviado"
+    item.edicion_solicitada = False
+    item.edicion_respuesta = None
+    item.editable_hasta = None
     db.session.commit()
     return jsonify({"message": "Rendicion enviada", "rendicion": _serialize_rendicion(item)}), 200
+
+
+@rendiciones_blueprint.route("/<int:id_rendicion>", methods=["DELETE"])
+def eliminar_rendicion(id_rendicion):
+    item = RendicionGasto.query.get_or_404(id_rendicion)
+    db.session.delete(item)
+    db.session.commit()
+    return jsonify({"message": "Rendicion eliminada"}), 200
+
+
+@rendiciones_blueprint.route("/<int:id_rendicion>/solicitar_edicion", methods=["POST"])
+def solicitar_edicion_rendicion(id_rendicion):
+    item = RendicionGasto.query.get_or_404(id_rendicion)
+    estado = str(item.estado or "").strip().lower()
+    if estado not in ("enviado", "edicion_rechazada"):
+        return jsonify({"error": "Solo puedes solicitar edicion en rendiciones enviadas."}), 400
+    data = request.get_json() or {}
+    motivo = str(data.get("motivo", "")).strip() or None
+    item.estado = "edicion_solicitada"
+    item.edicion_solicitada = True
+    item.edicion_motivo = motivo
+    item.edicion_solicitada_at = datetime.utcnow()
+    item.edicion_respuesta = None
+    item.edicion_resuelta_at = None
+    item.editable_hasta = None
+    db.session.commit()
+    return jsonify({"message": "Solicitud de edicion enviada", "rendicion": _serialize_rendicion(item)}), 200
+
+
+@rendiciones_blueprint.route("/<int:id_rendicion>/resolver_edicion", methods=["POST"])
+def resolver_edicion_rendicion(id_rendicion):
+    item = RendicionGasto.query.get_or_404(id_rendicion)
+    if str(item.estado or "").strip().lower() != "edicion_solicitada":
+        return jsonify({"error": "La rendicion no tiene solicitud de edicion pendiente."}), 400
+    data = request.get_json() or {}
+    accion = str(data.get("accion", "")).strip().lower()
+    respuesta = str(data.get("respuesta", "")).strip() or None
+    horas = int(data.get("horas", 24) or 24)
+    horas = max(1, min(horas, 168))
+    if accion not in ("aprobar", "rechazar"):
+        return jsonify({"error": "Accion invalida. Usa aprobar o rechazar."}), 400
+    item.edicion_resuelta_at = datetime.utcnow()
+    item.edicion_respuesta = respuesta
+    item.edicion_solicitada = False
+    if accion == "aprobar":
+        item.estado = "edicion_autorizada"
+        item.editable_hasta = datetime.utcnow() + timedelta(hours=horas)
+    else:
+        item.estado = "edicion_rechazada"
+        item.editable_hasta = None
+    db.session.commit()
+    return jsonify({"message": f"Solicitud {accion}da", "rendicion": _serialize_rendicion(item)}), 200

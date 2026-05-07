@@ -475,6 +475,12 @@ class RendicionGasto(db.Model):
     medio_pago = db.Column(db.String(30), nullable=True)  # efectivo | transferencia | tarjeta | otro
     fecha_gasto = db.Column(db.Date, nullable=False, index=True)
     estado = db.Column(db.String(20), nullable=False, default='borrador', index=True)  # borrador | enviado
+    edicion_solicitada = db.Column(db.Boolean, nullable=False, default=False)
+    edicion_motivo = db.Column(db.Text, nullable=True)
+    edicion_respuesta = db.Column(db.Text, nullable=True)
+    edicion_solicitada_at = db.Column(db.DateTime, nullable=True)
+    edicion_resuelta_at = db.Column(db.DateTime, nullable=True)
+    editable_hasta = db.Column(db.DateTime, nullable=True)
     adjuntos_json = db.Column(db.Text, nullable=True)  # json array data-url/base64
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
