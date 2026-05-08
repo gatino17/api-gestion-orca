@@ -691,6 +691,7 @@ class RetiroTerreno(db.Model):
     fecha_retiro = db.Column(db.Date, nullable=False, index=True)
     tipo_retiro = db.Column(db.String(20), nullable=False, default='parcial')  # parcial | completo
     estado_logistico = db.Column(db.String(30), nullable=False, default='retirado_centro')  # retirado_centro | en_transito | en_bodega
+    estado_edicion = db.Column(db.String(30), nullable=False, default='finalizado')  # finalizado | edicion_solicitada | edicion_autorizada | edicion_rechazada
     observacion = db.Column(db.Text, nullable=True)
     observacion_bodega = db.Column(db.Text, nullable=True)
     recepcion_bodega_por = db.Column(db.String(120), nullable=True)

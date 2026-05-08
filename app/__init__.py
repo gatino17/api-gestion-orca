@@ -525,6 +525,23 @@ def create_app():
                 """
             )
         )
+        db.session.execute(
+            text(
+                """
+                ALTER TABLE retiros_terreno
+                ADD COLUMN IF NOT EXISTS estado_edicion VARCHAR(30) DEFAULT 'finalizado'
+                """
+            )
+        )
+        db.session.execute(
+            text(
+                """
+                UPDATE retiros_terreno
+                SET estado_edicion = 'finalizado'
+                WHERE estado_edicion IS NULL OR TRIM(estado_edicion) = ''
+                """
+            )
+        )
         seed_default_roles(db)
         db.session.commit()
 

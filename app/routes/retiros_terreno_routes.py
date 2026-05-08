@@ -69,6 +69,7 @@ def _serialize_retiro(item: RetiroTerreno):
         "fecha_retiro": item.fecha_retiro.isoformat() if item.fecha_retiro else None,
         "tipo_retiro": item.tipo_retiro,
         "estado_logistico": item.estado_logistico,
+        "estado_edicion": item.estado_edicion or "finalizado",
         "observacion": item.observacion,
         "observacion_bodega": item.observacion_bodega,
         "recepcion_bodega_por": item.recepcion_bodega_por,
@@ -175,6 +176,7 @@ def crear_retiro_terreno():
             fecha_retiro=fecha_retiro,
             tipo_retiro=str(data.get("tipo_retiro") or "parcial"),
             estado_logistico=str(data.get("estado_logistico") or "retirado_centro"),
+            estado_edicion="finalizado",
             observacion=data.get("observacion"),
             observacion_bodega=data.get("observacion_bodega"),
             recepcion_bodega_por=data.get("recepcion_bodega_por"),
@@ -208,6 +210,10 @@ def actualizar_retiro_terreno(id_retiro_terreno):
         item = RetiroTerreno.query.get(id_retiro_terreno)
         if not item:
             return jsonify({"error": "Retiro en terreno no encontrado"}), 404
+
+        estado_edicion = str(item.estado_edicion or "finalizado").strip().lower()
+        if estado_edicion != "edicion_autorizada":
+            return jsonify({"error": "Solo se puede editar un retiro con edicion autorizada"}), 400
 
         if "centro_id" in data and data.get("centro_id"):
             centro = Centro.query.get(data.get("centro_id"))
@@ -248,11 +254,52 @@ def actualizar_retiro_terreno(id_retiro_terreno):
             for row in _build_equipos_rows(data.get("equipos")):
                 item.equipos.append(row)
 
+        item.estado_edicion = "finalizado"
+
         db.session.commit()
         return jsonify({"message": "Retiro en terreno actualizado", "retiro": _serialize_retiro(item)}), 200
     except Exception as e:
         db.session.rollback()
         return jsonify({"error": f"Error al actualizar retiro en terreno: {str(e)}"}), 500
+
+
+@retiros_terreno_blueprint.route('/<int:id_retiro_terreno>/solicitar_edicion', methods=['POST'])
+def solicitar_edicion_retiro_terreno(id_retiro_terreno):
+    try:
+        item = RetiroTerreno.query.get(id_retiro_terreno)
+        if not item:
+            return jsonify({"error": "Retiro en terreno no encontrado"}), 404
+
+        estado = str(item.estado_edicion or "finalizado").strip().lower()
+        if estado not in ("finalizado", "edicion_rechazada"):
+            return jsonify({"error": "Solo se puede solicitar edicion para retiros finalizados"}), 400
+
+        item.estado_edicion = "edicion_solicitada"
+        db.session.commit()
+        return jsonify({"message": "Solicitud de edicion enviada", "retiro": _serialize_retiro(item)}), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": f"Error al solicitar edicion del retiro: {str(e)}"}), 500
+
+
+@retiros_terreno_blueprint.route('/<int:id_retiro_terreno>/resolver_edicion', methods=['POST'])
+def resolver_edicion_retiro_terreno(id_retiro_terreno):
+    data = request.get_json() or {}
+    aprobar = bool(data.get("aprobar"))
+    try:
+        item = RetiroTerreno.query.get(id_retiro_terreno)
+        if not item:
+            return jsonify({"error": "Retiro en terreno no encontrado"}), 404
+
+        if str(item.estado_edicion or "").strip().lower() != "edicion_solicitada":
+            return jsonify({"error": "El retiro no tiene una solicitud de edicion pendiente"}), 400
+
+        item.estado_edicion = "edicion_autorizada" if aprobar else "edicion_rechazada"
+        db.session.commit()
+        return jsonify({"message": "Solicitud de edicion resuelta", "retiro": _serialize_retiro(item)}), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": f"Error al resolver solicitud de edicion del retiro: {str(e)}"}), 500
 
 
 @retiros_terreno_blueprint.route('/<int:id_retiro_terreno>', methods=['DELETE'])
