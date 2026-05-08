@@ -7,7 +7,7 @@ import re
 from flask import Blueprint, jsonify, request
 
 from ..database import db
-from ..models import Centro, RendicionAbono, RendicionGasto
+from ..models import Centro, RendicionAbono, RendicionGasto, User
 
 rendiciones_blueprint = Blueprint("rendiciones", __name__)
 
@@ -51,6 +51,35 @@ def _tecnico_key(tecnico_user_id, tecnico_nombre):
         return f"id:{user_id}"
     nombre = _normalize_text(tecnico_nombre)
     return f"name:{nombre}" if nombre else ""
+
+
+def _resolver_tecnico_user_id(tecnico_user_id, tecnico_nombre):
+    try:
+        uid = int(tecnico_user_id or 0)
+        if uid > 0:
+            return uid
+    except Exception:
+        pass
+    nombre_norm = _normalize_text(tecnico_nombre)
+    if not nombre_norm:
+        return None
+    try:
+        users = User.query.all()
+        exact = next((u for u in users if _normalize_text(getattr(u, "name", "")) == nombre_norm), None)
+        if exact:
+            return int(exact.id)
+        similar = next(
+            (
+                u
+                for u in users
+                if nombre_norm in _normalize_text(getattr(u, "name", ""))
+                or _normalize_text(getattr(u, "name", "")) in nombre_norm
+            ),
+            None,
+        )
+        return int(similar.id) if similar else None
+    except Exception:
+        return None
 
 
 def _serialize_rendicion(item: RendicionGasto):
@@ -109,8 +138,36 @@ def _calcular_saldos(abonos, rendiciones_enviadas):
         }
     )
 
+    canonicos = []
+    for item in list(abonos) + list(rendiciones_enviadas):
+        try:
+            uid = int(item.tecnico_user_id or 0)
+        except Exception:
+            uid = 0
+        nombre = str(item.tecnico_nombre or "").strip()
+        if uid > 0:
+            canonicos.append((uid, _normalize_text(nombre), nombre))
+
+    def _resolver_alias(uid, nombre):
+        try:
+            uid_int = int(uid or 0)
+        except Exception:
+            uid_int = 0
+        nombre = str(nombre or "").strip()
+        if uid_int > 0:
+            return f"id:{uid_int}"
+        n = _normalize_text(nombre)
+        if not n:
+            return ""
+        for cid, cnorm, _ in canonicos:
+            if not cnorm:
+                continue
+            if n == cnorm or n in cnorm or cnorm in n:
+                return f"id:{cid}"
+        return f"name:{n}"
+
     for item in abonos:
-        key = _tecnico_key(item.tecnico_user_id, item.tecnico_nombre)
+        key = _resolver_alias(item.tecnico_user_id, item.tecnico_nombre)
         if not key:
             continue
         row = data[key]
@@ -120,7 +177,7 @@ def _calcular_saldos(abonos, rendiciones_enviadas):
         row["total_abonos"] += Decimal(str(item.monto or 0))
 
     for item in rendiciones_enviadas:
-        key = _tecnico_key(item.tecnico_user_id, item.tecnico_nombre)
+        key = _resolver_alias(item.tecnico_user_id, item.tecnico_nombre)
         if not key:
             continue
         row = data[key]
@@ -219,6 +276,8 @@ def crear_abono():
     if monto <= 0:
         return jsonify({"error": "El monto debe ser mayor a 0."}), 400
 
+    tecnico_user_id = _resolver_tecnico_user_id(tecnico_user_id, tecnico_nombre)
+
     nuevo = RendicionAbono(
         tecnico_user_id=tecnico_user_id,
         tecnico_nombre=tecnico_nombre or None,
@@ -272,9 +331,12 @@ def crear_rendicion():
             cliente_id = centro.cliente.id_cliente
 
     adjuntos = _safe_json_array(data.get("adjuntos"))
+    tecnico_nombre = str(data.get("tecnico_nombre", "")).strip() or None
+    tecnico_user_id = _resolver_tecnico_user_id(data.get("tecnico_user_id"), tecnico_nombre)
+
     nuevo = RendicionGasto(
-        tecnico_user_id=data.get("tecnico_user_id"),
-        tecnico_nombre=data.get("tecnico_nombre"),
+        tecnico_user_id=tecnico_user_id,
+        tecnico_nombre=tecnico_nombre,
         cliente_id=cliente_id,
         centro_id=centro_id,
         actividad_tipo=data.get("actividad_tipo"),
@@ -310,6 +372,8 @@ def actualizar_rendicion(id_rendicion):
         item.tecnico_user_id = data.get("tecnico_user_id")
     if "tecnico_nombre" in data:
         item.tecnico_nombre = data.get("tecnico_nombre")
+    if "tecnico_user_id" in data or "tecnico_nombre" in data:
+        item.tecnico_user_id = _resolver_tecnico_user_id(item.tecnico_user_id, item.tecnico_nombre)
     if "cliente_id" in data:
         item.cliente_id = data.get("cliente_id")
     if "centro_id" in data:
