@@ -3,10 +3,12 @@ from flask import Blueprint, request, jsonify, send_file
 from datetime import datetime
 from decimal import Decimal
 from werkzeug.utils import secure_filename
-from ..models import Inventario, Centro, BodegaInventarioEquipo, db
+import jwt
+from ..models import Inventario, Centro, BodegaInventarioEquipo, User, db
 
 # Crear el blueprint
 inventarios_blueprint = Blueprint('inventarios', __name__)
+SECRET_KEY = "remoto753524"
 
 # Configuración para archivos
 ALLOWED_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.pdf'}
@@ -41,9 +43,34 @@ def _serialize_bodega_equipo(item: BodegaInventarioEquipo):
         "ubicacion": item.ubicacion,
         "imagen_base64": item.imagen_base64,
         "imagen_nombre": item.imagen_nombre,
+        "estado_asignacion": item.estado_asignacion,
+        "tecnico_asignado_id": item.tecnico_asignado_id,
+        "tecnico_asignado_nombre": item.tecnico_asignado_nombre,
+        "asignado_por_id": item.asignado_por_id,
+        "asignado_por_nombre": item.asignado_por_nombre,
+        "fecha_asignacion": item.fecha_asignacion.isoformat() if item.fecha_asignacion else None,
+        "fecha_devolucion": item.fecha_devolucion.isoformat() if item.fecha_devolucion else None,
+        "observacion_asignacion": item.observacion_asignacion,
+        "observacion_devolucion": item.observacion_devolucion,
         "created_at": item.created_at.isoformat() if item.created_at else None,
         "updated_at": item.updated_at.isoformat() if item.updated_at else None,
     }
+
+
+def _usuario_actual_desde_token():
+    token = request.headers.get("Authorization") or ""
+    if not token.startswith("Bearer "):
+        return None
+    try:
+        payload = jwt.decode(token.split("Bearer ")[1], SECRET_KEY, algorithms=["HS256"])
+        user_id = payload.get("user_id") or payload.get("id") or payload.get("sub")
+        try:
+            user_id = int(user_id)
+        except Exception:
+            return None
+        return User.query.get(user_id)
+    except Exception:
+        return None
 
 def is_allowed_file(filename):
     """Verifica si la extensión del archivo está permitida."""
@@ -233,6 +260,7 @@ def crear_bodega_equipos():
                 ubicacion=str(raw.get("ubicacion") or "Bodega central"),
                 imagen_base64=raw.get("imagen_base64"),
                 imagen_nombre=raw.get("imagen_nombre"),
+                estado_asignacion="en_bodega",
             )
             db.session.add(item)
             creados.append(item)
@@ -293,6 +321,50 @@ def actualizar_bodega_equipo(id_bodega_equipo):
             item.imagen_base64 = data.get("imagen_base64")
         if "imagen_nombre" in data:
             item.imagen_nombre = data.get("imagen_nombre")
+        if "estado_asignacion" in data:
+            estado_asignacion = str(data.get("estado_asignacion") or "en_bodega").strip().lower()
+            if estado_asignacion not in {"en_bodega", "asignado_tecnico"}:
+                return jsonify({"error": "estado_asignacion invalido"}), 400
+            item.estado_asignacion = estado_asignacion
+            if estado_asignacion == "en_bodega":
+                item.tecnico_asignado_id = None
+                item.tecnico_asignado_nombre = None
+
+        if "tecnico_asignado_id" in data:
+            raw_id = data.get("tecnico_asignado_id")
+            if raw_id in (None, "", 0, "0"):
+                item.tecnico_asignado_id = None
+            else:
+                try:
+                    tid = int(raw_id)
+                except Exception:
+                    return jsonify({"error": "tecnico_asignado_id invalido"}), 400
+                user = User.query.get(tid)
+                if not user:
+                    return jsonify({"error": "Tecnico no encontrado"}), 404
+                item.tecnico_asignado_id = tid
+                item.tecnico_asignado_nombre = user.name
+
+        if "tecnico_asignado_nombre" in data:
+            item.tecnico_asignado_nombre = str(data.get("tecnico_asignado_nombre") or "").strip() or None
+        if "asignado_por_id" in data:
+            item.asignado_por_id = int(data.get("asignado_por_id")) if data.get("asignado_por_id") not in (None, "", 0, "0") else None
+        if "asignado_por_nombre" in data:
+            item.asignado_por_nombre = str(data.get("asignado_por_nombre") or "").strip() or None
+        if "fecha_asignacion" in data:
+            try:
+                item.fecha_asignacion = datetime.fromisoformat(str(data.get("fecha_asignacion")).replace("Z", "+00:00")) if data.get("fecha_asignacion") else None
+            except Exception:
+                item.fecha_asignacion = datetime.utcnow() if data.get("fecha_asignacion") else None
+        if "fecha_devolucion" in data:
+            try:
+                item.fecha_devolucion = datetime.fromisoformat(str(data.get("fecha_devolucion")).replace("Z", "+00:00")) if data.get("fecha_devolucion") else None
+            except Exception:
+                item.fecha_devolucion = datetime.utcnow() if data.get("fecha_devolucion") else None
+        if "observacion_asignacion" in data:
+            item.observacion_asignacion = data.get("observacion_asignacion")
+        if "observacion_devolucion" in data:
+            item.observacion_devolucion = data.get("observacion_devolucion")
 
         db.session.commit()
         return jsonify({"message": "Equipo actualizado", "item": _serialize_bodega_equipo(item)}), 200
@@ -310,6 +382,64 @@ def eliminar_bodega_equipo(id_bodega_equipo):
         db.session.delete(item)
         db.session.commit()
         return jsonify({"message": "Equipo eliminado"}), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
+
+@inventarios_blueprint.route('/bodega_equipos/<int:id_bodega_equipo>/asignar_tecnico', methods=['POST'])
+def asignar_bodega_equipo_tecnico(id_bodega_equipo):
+    data = request.get_json() or {}
+    item = BodegaInventarioEquipo.query.get(id_bodega_equipo)
+    if not item:
+        return jsonify({"error": "Equipo no encontrado"}), 404
+    try:
+        tecnico_id = data.get("tecnico_id")
+        if tecnico_id in (None, "", 0, "0"):
+            return jsonify({"error": "tecnico_id es obligatorio"}), 400
+        try:
+            tecnico_id = int(tecnico_id)
+        except Exception:
+            return jsonify({"error": "tecnico_id invalido"}), 400
+
+        tecnico = User.query.get(tecnico_id)
+        if not tecnico:
+            return jsonify({"error": "Tecnico no encontrado"}), 404
+
+        actual = _usuario_actual_desde_token()
+        item.estado_asignacion = "asignado_tecnico"
+        item.tecnico_asignado_id = tecnico.id
+        item.tecnico_asignado_nombre = tecnico.name or tecnico.email
+        item.asignado_por_id = getattr(actual, "id", None)
+        item.asignado_por_nombre = getattr(actual, "name", None) or getattr(actual, "email", None)
+        item.fecha_asignacion = datetime.utcnow()
+        item.fecha_devolucion = None
+        item.observacion_asignacion = data.get("observacion") or item.observacion_asignacion
+
+        db.session.commit()
+        return jsonify({"message": "Equipo asignado a tecnico", "item": _serialize_bodega_equipo(item)}), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
+
+@inventarios_blueprint.route('/bodega_equipos/<int:id_bodega_equipo>/devolver_bodega', methods=['POST'])
+def devolver_bodega_equipo(id_bodega_equipo):
+    data = request.get_json() or {}
+    item = BodegaInventarioEquipo.query.get(id_bodega_equipo)
+    if not item:
+        return jsonify({"error": "Equipo no encontrado"}), 404
+    try:
+        item.estado_asignacion = "en_bodega"
+        item.tecnico_asignado_id = None
+        item.tecnico_asignado_nombre = None
+        item.fecha_devolucion = datetime.utcnow()
+        item.observacion_devolucion = data.get("observacion") or item.observacion_devolucion
+        if "ubicacion" in data and str(data.get("ubicacion") or "").strip():
+            item.ubicacion = str(data.get("ubicacion")).strip()
+
+        db.session.commit()
+        return jsonify({"message": "Equipo devuelto a bodega", "item": _serialize_bodega_equipo(item)}), 200
     except Exception as e:
         db.session.rollback()
         return jsonify({"error": str(e)}), 500

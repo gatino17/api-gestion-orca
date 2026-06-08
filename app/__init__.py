@@ -158,6 +158,14 @@ def create_app():
         db.session.execute(
             text(
                 """
+                ALTER TABLE armados
+                ADD COLUMN IF NOT EXISTS check_tecnico_fecha DATE
+                """
+            )
+        )
+        db.session.execute(
+            text(
+                """
                 ALTER TABLE centros
                 ADD COLUMN IF NOT EXISTS es_central BOOLEAN DEFAULT FALSE
                 """
@@ -539,6 +547,24 @@ def create_app():
                 UPDATE retiros_terreno
                 SET estado_edicion = 'finalizado'
                 WHERE estado_edicion IS NULL OR TRIM(estado_edicion) = ''
+                """
+            )
+        )
+        db.session.execute(text("ALTER TABLE bodega_inventario_equipos ADD COLUMN IF NOT EXISTS estado_asignacion VARCHAR(30) DEFAULT 'en_bodega'"))
+        db.session.execute(text("ALTER TABLE bodega_inventario_equipos ADD COLUMN IF NOT EXISTS tecnico_asignado_id INTEGER REFERENCES users(id) ON DELETE SET NULL"))
+        db.session.execute(text("ALTER TABLE bodega_inventario_equipos ADD COLUMN IF NOT EXISTS tecnico_asignado_nombre VARCHAR(120)"))
+        db.session.execute(text("ALTER TABLE bodega_inventario_equipos ADD COLUMN IF NOT EXISTS asignado_por_id INTEGER REFERENCES users(id) ON DELETE SET NULL"))
+        db.session.execute(text("ALTER TABLE bodega_inventario_equipos ADD COLUMN IF NOT EXISTS asignado_por_nombre VARCHAR(120)"))
+        db.session.execute(text("ALTER TABLE bodega_inventario_equipos ADD COLUMN IF NOT EXISTS fecha_asignacion TIMESTAMP"))
+        db.session.execute(text("ALTER TABLE bodega_inventario_equipos ADD COLUMN IF NOT EXISTS fecha_devolucion TIMESTAMP"))
+        db.session.execute(text("ALTER TABLE bodega_inventario_equipos ADD COLUMN IF NOT EXISTS observacion_asignacion TEXT"))
+        db.session.execute(text("ALTER TABLE bodega_inventario_equipos ADD COLUMN IF NOT EXISTS observacion_devolucion TEXT"))
+        db.session.execute(
+            text(
+                """
+                UPDATE bodega_inventario_equipos
+                SET estado_asignacion = 'en_bodega'
+                WHERE estado_asignacion IS NULL OR TRIM(estado_asignacion) = ''
                 """
             )
         )

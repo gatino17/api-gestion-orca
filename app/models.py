@@ -274,8 +274,20 @@ class BodegaInventarioEquipo(db.Model):
     ubicacion = db.Column(db.String(120), nullable=False, default='Bodega central')
     imagen_base64 = db.Column(db.Text, nullable=True)
     imagen_nombre = db.Column(db.String(255), nullable=True)
+    estado_asignacion = db.Column(db.String(30), nullable=False, default='en_bodega')  # en_bodega | asignado_tecnico
+    tecnico_asignado_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)
+    tecnico_asignado_nombre = db.Column(db.String(120), nullable=True)
+    asignado_por_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)
+    asignado_por_nombre = db.Column(db.String(120), nullable=True)
+    fecha_asignacion = db.Column(db.DateTime, nullable=True)
+    fecha_devolucion = db.Column(db.DateTime, nullable=True)
+    observacion_asignacion = db.Column(db.Text, nullable=True)
+    observacion_devolucion = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, nullable=False, default=db.func.now())
     updated_at = db.Column(db.DateTime, nullable=False, default=db.func.now(), onupdate=db.func.now())
+
+    tecnico_asignado = db.relationship('User', foreign_keys=[tecnico_asignado_id], backref='bodega_equipos_asignados')
+    asignado_por = db.relationship('User', foreign_keys=[asignado_por_id], backref='bodega_asignaciones_realizadas')
 
     def __repr__(self):
         return f"<BodegaInventarioEquipo(id={self.id_bodega_equipo}, codigo={self.codigo}, serie={self.numero_serie})>"
@@ -882,10 +894,11 @@ class Armado(db.Model):
     id_armado = db.Column(db.Integer, primary_key=True, autoincrement=True)
     centro_id = db.Column(db.Integer, db.ForeignKey('centros.id_centro'), nullable=False)
     tecnico_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
-    estado = db.Column(db.String(20), default='pendiente')  # pendiente | en_proceso | finalizado
+    estado = db.Column(db.String(20), default='pendiente')  # pendiente | en_proceso | prefinalizado | finalizado
     fecha_asignacion = db.Column(db.Date, default=datetime.utcnow)
     fecha_inicio = db.Column(db.Date, nullable=True)
     fecha_cierre = db.Column(db.Date, nullable=True)
+    check_tecnico_fecha = db.Column(db.Date, nullable=True)
     observacion = db.Column(db.Text, nullable=True)
     total_cajas_manual = db.Column(db.Integer, nullable=True)
     creado_por = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
@@ -899,6 +912,34 @@ class Armado(db.Model):
             f"<Armado(id_armado={self.id_armado}, centro_id={self.centro_id}, tecnico_id={self.tecnico_id}, "
             f"estado='{self.estado}', fecha_asignacion={self.fecha_asignacion}, "
             f"fecha_inicio={self.fecha_inicio}, fecha_cierre={self.fecha_cierre})>"
+        )
+
+
+class ArmadoGuiaSalida(db.Model):
+    __tablename__ = 'armados_guias_salida'
+
+    id_guia_salida = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    armado_id = db.Column(
+        db.Integer,
+        db.ForeignKey('armados.id_armado', ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True
+    )
+    numero_guia = db.Column(db.String(80), nullable=False)
+    fecha_salida = db.Column(db.Date, nullable=False)
+    fecha_recepcion_centro = db.Column(db.DateTime, nullable=True)
+    observacion = db.Column(db.Text, nullable=True)
+    estado = db.Column(db.String(40), nullable=False, default='en_transito_centro')
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    armado = db.relationship('Armado', backref=db.backref('guia_salida', uselist=False, cascade="all, delete-orphan"))
+
+    def __repr__(self):
+        return (
+            f"<ArmadoGuiaSalida(id_guia_salida={self.id_guia_salida}, armado_id={self.armado_id}, "
+            f"numero_guia='{self.numero_guia}', estado='{self.estado}')>"
         )
 
 

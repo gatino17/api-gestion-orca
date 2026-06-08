@@ -1,5 +1,5 @@
 from flask import Blueprint, request, jsonify
-from ..models import Armado, ArmadoParticipacion, ArmadoMaterial, Centro, Cliente, User, EquiposIP, RetiroTerreno, RetiroTerrenoEquipo
+from ..models import Armado, ArmadoParticipacion, ArmadoMaterial, ArmadoGuiaSalida, Centro, Cliente, User, EquiposIP, RetiroTerreno, RetiroTerrenoEquipo
 from ..models import ArmadoCajaMovimiento
 from ..database import db
 from ..socketio_ext import emit_armado_event
@@ -45,6 +45,22 @@ def emitir_actualizacion_armado(armado_id, tipo="armado"):
     )
 
 
+def serializar_guia_salida(guia):
+    if not guia:
+        return None
+    return {
+        "id_guia_salida": guia.id_guia_salida,
+        "armado_id": guia.armado_id,
+        "numero_guia": guia.numero_guia,
+        "fecha_salida": guia.fecha_salida.isoformat() if guia.fecha_salida else None,
+        "fecha_recepcion_centro": guia.fecha_recepcion_centro.isoformat() if guia.fecha_recepcion_centro else None,
+        "observacion": guia.observacion,
+        "estado": guia.estado,
+        "created_at": guia.created_at.isoformat() if guia.created_at else None,
+        "updated_at": guia.updated_at.isoformat() if guia.updated_at else None,
+    }
+
+
 def usuario_actual_desde_token():
     token = request.headers.get('Authorization') or ''
     if not token.startswith("Bearer "):
@@ -61,27 +77,76 @@ def usuario_actual_desde_token():
         return None
 
 
+def _participaciones_activas_armado(armado_id):
+    return (
+        ArmadoParticipacion.query.filter_by(armado_id=armado_id, fecha_fin=None)
+        .order_by(ArmadoParticipacion.fecha_inicio.asc(), ArmadoParticipacion.id_participacion.asc())
+        .all()
+    )
+
+
+def _serializar_tecnicos_activos(armado):
+    activos = _participaciones_activas_armado(armado.id_armado)
+    vistos = set()
+    resultado = []
+    for part in activos:
+        tecnico = part.tecnico
+        tecnico_id = int(part.tecnico_id or 0)
+        if tecnico_id <= 0 or tecnico_id in vistos:
+            continue
+        vistos.add(tecnico_id)
+        resultado.append({
+            "id": tecnico.id if tecnico else tecnico_id,
+            "nombre": tecnico.name if tecnico else f"ID {tecnico_id}",
+            "rol": tecnico.rol if tecnico else None,
+            "principal": tecnico_id == int(armado.tecnico_id or 0)
+        })
+
+    if not resultado and armado.tecnico_id:
+        resultado.append({
+            "id": armado.tecnico.id if armado.tecnico else armado.tecnico_id,
+            "nombre": armado.tecnico.name if armado.tecnico else f"ID {armado.tecnico_id}",
+            "rol": armado.tecnico.rol if armado.tecnico else None,
+            "principal": True
+        })
+    return resultado
+
+
 @armados_blueprint.route('/', methods=['GET'])
 def listar_armados():
     estado = request.args.get('estado')
-    tecnico_id = request.args.get('tecnico_id')
+    tecnico_id = request.args.get('tecnico_id', type=int)
     centro_id = request.args.get('centro_id', type=int)
 
     query = Armado.query
     if estado:
         query = query.filter(Armado.estado == estado)
     if tecnico_id:
-        query = query.filter(Armado.tecnico_id == tecnico_id)
+        armados_activos_subq = (
+            db.session.query(ArmadoParticipacion.armado_id)
+            .filter(
+                ArmadoParticipacion.tecnico_id == tecnico_id,
+                ArmadoParticipacion.fecha_fin.is_(None)
+            )
+            .subquery()
+        )
+        query = query.filter(
+            or_(
+                Armado.tecnico_id == tecnico_id,
+                Armado.id_armado.in_(armados_activos_subq)
+            )
+        )
     if centro_id:
         query = query.filter(Armado.centro_id == centro_id)
 
-    armados = query.order_by(Armado.fecha_asignacion.desc()).all()
+    armados = query.order_by(Armado.fecha_asignacion.desc()).distinct().all()
     resultado = []
     for armado in armados:
         participaciones = ArmadoParticipacion.query.filter_by(armado_id=armado.id_armado).order_by(
             ArmadoParticipacion.fecha_inicio.asc(), ArmadoParticipacion.id_participacion.asc()
         ).all()
         historial_tecnicos = [p.tecnico.name if p.tecnico else f"ID {p.tecnico_id}" for p in participaciones]
+        tecnicos_activos = _serializar_tecnicos_activos(armado)
         # calcular total de cajas (equipos del centro + materiales del armado)
         cajas_equipos = {e.caja or 'Caja 1' for e in EquiposIP.query.filter_by(centro_id=armado.centro_id).all()}
         cajas_materiales = {m.caja or 'Caja 1' for m in ArmadoMaterial.query.filter_by(armado_id=armado.id_armado).all()}
@@ -114,9 +179,11 @@ def listar_armados():
             "fecha_asignacion": armado.fecha_asignacion,
             "fecha_inicio": fecha_inicio_real,
             "fecha_cierre": armado.fecha_cierre,
+            "check_tecnico_fecha": armado.check_tecnico_fecha,
             "observacion": armado.observacion,
             "total_cajas": total_cajas,
-            "tecnicos_historial": historial_tecnicos
+            "tecnicos_historial": historial_tecnicos,
+            "tecnicos_asignados": tecnicos_activos
         })
     return jsonify(resultado), 200
 
@@ -126,13 +193,41 @@ def crear_armado():
     data = request.json or {}
     centro_id = data.get('centro_id')
     tecnico_id = data.get('tecnico_id')
+    tecnico_secundario_id = data.get('tecnico_secundario_id')
+    tecnicos_ids_raw = data.get('tecnicos_ids') if isinstance(data.get('tecnicos_ids'), list) else None
 
     if not centro_id or not tecnico_id:
         return jsonify({"message": "centro_id y tecnico_id son requeridos"}), 400
 
+    tecnicos_ids = []
+    if tecnicos_ids_raw:
+        for item in tecnicos_ids_raw:
+            try:
+                tid = int(item or 0)
+            except Exception:
+                tid = 0
+            if tid > 0 and tid not in tecnicos_ids:
+                tecnicos_ids.append(tid)
+    else:
+        try:
+            titular = int(tecnico_id or 0)
+        except Exception:
+            titular = 0
+        try:
+            secundario = int(tecnico_secundario_id or 0)
+        except Exception:
+            secundario = 0
+        if titular > 0:
+            tecnicos_ids.append(titular)
+        if secundario > 0 and secundario not in tecnicos_ids:
+            tecnicos_ids.append(secundario)
+
+    if not tecnicos_ids:
+        return jsonify({"message": "Debes indicar al menos un tecnico valido"}), 400
+
     nuevo = Armado(
         centro_id=centro_id,
-        tecnico_id=tecnico_id,
+        tecnico_id=tecnicos_ids[0],
         estado=data.get('estado', 'pendiente'),
         fecha_asignacion=parse_date(data.get('fecha_asignacion')) or datetime.utcnow().date(),
         fecha_inicio=parse_date(data.get('fecha_inicio')),
@@ -142,17 +237,102 @@ def crear_armado():
         creado_por=data.get('creado_por')
     )
     db.session.add(nuevo)
-    # Crear participación inicial
-    participacion = ArmadoParticipacion(
-        armado=nuevo,
-        tecnico_id=tecnico_id,
-        fecha_inicio=nuevo.fecha_asignacion,
-        nota=data.get('observacion')
-    )
-    db.session.add(participacion)
+    for tecnico_asignado_id in tecnicos_ids:
+        participacion = ArmadoParticipacion(
+            armado=nuevo,
+            tecnico_id=tecnico_asignado_id,
+            fecha_inicio=nuevo.fecha_asignacion,
+            nota=data.get('observacion')
+        )
+        db.session.add(participacion)
     db.session.commit()
     emitir_actualizacion_armado(nuevo.id_armado, "armado")
     return jsonify({"message": "Armado creado", "id_armado": nuevo.id_armado}), 201
+
+
+@armados_blueprint.route('/guias-salida', methods=['GET'])
+def listar_guias_salida_armado():
+    armados_ids = request.args.getlist('armado_id', type=int)
+    query = ArmadoGuiaSalida.query
+    if armados_ids:
+        query = query.filter(ArmadoGuiaSalida.armado_id.in_(armados_ids))
+    guias = query.order_by(ArmadoGuiaSalida.updated_at.desc(), ArmadoGuiaSalida.id_guia_salida.desc()).all()
+    return jsonify([serializar_guia_salida(g) for g in guias]), 200
+
+
+@armados_blueprint.route('/<int:id_armado>/guia-salida', methods=['GET'])
+def obtener_guia_salida_armado(id_armado):
+    Armado.query.get_or_404(id_armado)
+    guia = ArmadoGuiaSalida.query.filter_by(armado_id=id_armado).first()
+    if not guia:
+        return jsonify({"message": "Guía de salida no encontrada"}), 404
+    return jsonify(serializar_guia_salida(guia)), 200
+
+
+@armados_blueprint.route('/<int:id_armado>/guia-salida', methods=['PUT'])
+def guardar_guia_salida_armado(id_armado):
+    armado = Armado.query.get_or_404(id_armado)
+    data = request.json or {}
+    numero_guia = str(data.get('numero_guia') or '').strip() or f"GS-{str(id_armado).zfill(4)}"
+    fecha_salida = parse_date(data.get('fecha_salida')) or datetime.utcnow().date()
+    observacion = data.get('observacion')
+    estado = str(data.get('estado') or 'en_transito_centro').strip() or 'en_transito_centro'
+
+    guia = ArmadoGuiaSalida.query.filter_by(armado_id=id_armado).first()
+    if not guia:
+        guia = ArmadoGuiaSalida(
+            armado_id=id_armado,
+            numero_guia=numero_guia,
+            fecha_salida=fecha_salida,
+            observacion=observacion,
+            estado=estado,
+        )
+        db.session.add(guia)
+    else:
+        guia.numero_guia = numero_guia
+        guia.fecha_salida = fecha_salida
+        guia.observacion = observacion
+        guia.estado = estado
+        guia.updated_at = datetime.utcnow()
+
+    db.session.commit()
+    emitir_actualizacion_armado(armado.id_armado, "guia_salida")
+    return jsonify(serializar_guia_salida(guia)), 200
+
+
+@armados_blueprint.route('/<int:id_armado>/guia-salida/recepcion-centro', methods=['POST'])
+def marcar_recepcion_centro_guia(id_armado):
+    Armado.query.get_or_404(id_armado)
+    guia = ArmadoGuiaSalida.query.filter_by(armado_id=id_armado).first()
+    if not guia:
+        return jsonify({"message": "Guía de salida no encontrada"}), 404
+
+    data = request.json or {}
+    fecha_recepcion = data.get('fecha_recepcion_centro')
+    if fecha_recepcion:
+        try:
+            guia.fecha_recepcion_centro = datetime.fromisoformat(str(fecha_recepcion).replace("Z", "+00:00"))
+        except ValueError:
+            guia.fecha_recepcion_centro = datetime.utcnow()
+    else:
+        guia.fecha_recepcion_centro = datetime.utcnow()
+    guia.estado = 'recepcionado_en_centro'
+    guia.updated_at = datetime.utcnow()
+    db.session.commit()
+    emitir_actualizacion_armado(id_armado, "guia_salida")
+    return jsonify(serializar_guia_salida(guia)), 200
+
+
+@armados_blueprint.route('/<int:id_armado>/guia-salida', methods=['DELETE'])
+def eliminar_guia_salida_armado(id_armado):
+    Armado.query.get_or_404(id_armado)
+    guia = ArmadoGuiaSalida.query.filter_by(armado_id=id_armado).first()
+    if not guia:
+        return jsonify({"message": "Guía de salida no encontrada"}), 404
+    db.session.delete(guia)
+    db.session.commit()
+    emitir_actualizacion_armado(id_armado, "guia_salida")
+    return jsonify({"message": "Guía de salida eliminada"}), 200
 
 
 @armados_blueprint.route('/<int:id_armado>', methods=['PUT'])
@@ -163,9 +343,25 @@ def actualizar_armado(id_armado):
     armado.centro_id = data.get('centro_id', armado.centro_id)
     armado.tecnico_id = data.get('tecnico_id', armado.tecnico_id)
     armado.estado = data.get('estado', armado.estado)
-    armado.fecha_asignacion = parse_date(data.get('fecha_asignacion')) or armado.fecha_asignacion
-    armado.fecha_inicio = parse_date(data.get('fecha_inicio'))
-    armado.fecha_cierre = parse_date(data.get('fecha_cierre'))
+
+    # Solo actualizar fechas cuando el campo viene explícitamente en payload.
+    # Evita borrar/modificar fechas por requests parciales (ej: solo estado).
+    if 'fecha_asignacion' in data:
+        parsed = parse_date(data.get('fecha_asignacion'))
+        if parsed is not None:
+            armado.fecha_asignacion = parsed
+
+    if 'fecha_inicio' in data:
+        parsed = parse_date(data.get('fecha_inicio'))
+        armado.fecha_inicio = parsed if parsed is not None else armado.fecha_inicio
+
+    if 'fecha_cierre' in data:
+        parsed = parse_date(data.get('fecha_cierre'))
+        armado.fecha_cierre = parsed if parsed is not None else armado.fecha_cierre
+    if 'check_tecnico_fecha' in data:
+        parsed = parse_date(data.get('check_tecnico_fecha'))
+        armado.check_tecnico_fecha = parsed if parsed is not None else armado.check_tecnico_fecha
+
     armado.observacion = data.get('observacion', armado.observacion)
     if 'total_cajas_manual' in data:
         try:
@@ -660,10 +856,10 @@ def crear_participacion(id_armado):
 
     armado = Armado.query.get_or_404(id_armado)
 
-    # Cerrar participación vigente
-    vigente = ArmadoParticipacion.query.filter_by(armado_id=id_armado, fecha_fin=None).first()
+    # Cerrar participaciones vigentes
+    vigentes = ArmadoParticipacion.query.filter_by(armado_id=id_armado, fecha_fin=None).all()
     hoy = datetime.utcnow().date()
-    if vigente:
+    for vigente in vigentes:
         vigente.fecha_fin = hoy
 
     # Nueva participación
