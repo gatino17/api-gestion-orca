@@ -8,6 +8,7 @@ import unicodedata
 import jwt
 import re
 from sqlalchemy import and_, or_
+from sqlalchemy.orm import joinedload
 
 armados_blueprint = Blueprint('armados', __name__)
 SECRET_KEY = "remoto753524"
@@ -539,19 +540,30 @@ def listar_movimientos_recientes():
     total = base_query.count()
     movs = (
         base_query
-        .order_by(ArmadoCajaMovimiento.fecha.desc())
+        .options(joinedload(ArmadoCajaMovimiento.tecnico))
+        .order_by(
+            ArmadoCajaMovimiento.fecha.desc(),
+            ArmadoCajaMovimiento.id_movimiento.desc()
+        )
         .offset((page - 1) * limite)
         .limit(limite)
         .all()
     )
     data = []
-    # Consulta opcional de centros para contexto
-    armados_cache = {}
+    armados_map = {}
+    armado_ids = list({m.armado_id for m in movs if m.armado_id})
+    if armado_ids:
+        armados_map = {
+            a.id_armado: a
+            for a in (
+                Armado.query
+                .options(joinedload(Armado.centro))
+                .filter(Armado.id_armado.in_(armado_ids))
+                .all()
+            )
+        }
     for m in movs:
-        armado = armados_cache.get(m.armado_id)
-        if armado is None:
-            armado = Armado.query.get(m.armado_id)
-            armados_cache[m.armado_id] = armado
+        armado = armados_map.get(m.armado_id)
         data.append({
             "id_movimiento": m.id_movimiento,
             "armado_id": m.armado_id,
@@ -850,30 +862,57 @@ def listar_participaciones(id_armado):
 def crear_participacion(id_armado):
     data = request.json or {}
     tecnico_id = data.get('tecnico_id')
+    reemplaza_tecnico_id = data.get('reemplaza_tecnico_id')
     nota = data.get('nota')
     if not tecnico_id:
         return jsonify({"message": "tecnico_id es requerido"}), 400
 
     armado = Armado.query.get_or_404(id_armado)
 
-    # Cerrar participaciones vigentes
+    try:
+        tecnico_id = int(tecnico_id)
+    except (TypeError, ValueError):
+        return jsonify({"message": "tecnico_id invalido"}), 400
+
+    try:
+        reemplaza_tecnico_id = int(reemplaza_tecnico_id) if reemplaza_tecnico_id is not None else None
+    except (TypeError, ValueError):
+        return jsonify({"message": "reemplaza_tecnico_id invalido"}), 400
+
     vigentes = ArmadoParticipacion.query.filter_by(armado_id=id_armado, fecha_fin=None).all()
     hoy = datetime.utcnow().date()
-    for vigente in vigentes:
-        vigente.fecha_fin = hoy
+    reemplaza_principal = True
+    vigentes_ids = {int(v.tecnico_id or 0) for v in vigentes}
 
-    # Nueva participación
-    nueva = ArmadoParticipacion(
-        armado_id=id_armado,
-        tecnico_id=tecnico_id,
-        fecha_inicio=hoy,
-        nota=nota
-    )
-    armado.tecnico_id = tecnico_id  # actualizar técnico activo
-    db.session.add(nueva)
+    if reemplaza_tecnico_id is not None:
+        objetivos = [v for v in vigentes if int(v.tecnico_id or 0) == reemplaza_tecnico_id]
+        if not objetivos:
+            return jsonify({"message": "No se encontro el tecnico actual a reemplazar"}), 404
+        if tecnico_id in vigentes_ids and tecnico_id != reemplaza_tecnico_id:
+            return jsonify({"message": "El tecnico seleccionado ya esta asignado al armado"}), 409
+        for vigente in objetivos:
+            vigente.fecha_fin = hoy
+        reemplaza_principal = any(int(v.tecnico_id or 0) == int(armado.tecnico_id or 0) for v in objetivos)
+    else:
+        for vigente in vigentes:
+            vigente.fecha_fin = hoy
+
+    nueva = None
+    if tecnico_id != reemplaza_tecnico_id:
+        nueva = ArmadoParticipacion(
+            armado_id=id_armado,
+            tecnico_id=tecnico_id,
+            fecha_inicio=hoy,
+            nota=nota
+        )
+        db.session.add(nueva)
+
+    if reemplaza_principal:
+        armado.tecnico_id = tecnico_id
+
     db.session.commit()
 
-    return jsonify({"message": "Participación creada", "id_participacion": nueva.id_participacion}), 201
+    return jsonify({"message": "Participacion creada", "id_participacion": nueva.id_participacion if nueva else None}), 201
 
 
 @armados_blueprint.route('/participaciones/<int:id_participacion>', methods=['PUT'])
