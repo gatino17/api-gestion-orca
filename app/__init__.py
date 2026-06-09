@@ -559,6 +559,35 @@ def create_app():
         db.session.execute(text("ALTER TABLE bodega_inventario_equipos ADD COLUMN IF NOT EXISTS fecha_devolucion TIMESTAMP"))
         db.session.execute(text("ALTER TABLE bodega_inventario_equipos ADD COLUMN IF NOT EXISTS observacion_asignacion TEXT"))
         db.session.execute(text("ALTER TABLE bodega_inventario_equipos ADD COLUMN IF NOT EXISTS observacion_devolucion TEXT"))
+        db.session.execute(text("ALTER TABLE armados_guias_salida ADD COLUMN IF NOT EXISTS tipo_despacho VARCHAR(20) DEFAULT 'total'"))
+        db.session.execute(text("ALTER TABLE armados_guias_salida ADD COLUMN IF NOT EXISTS modalidad_salida VARCHAR(30) DEFAULT 'guia'"))
+        db.session.execute(text("ALTER TABLE armados_guias_salida ADD COLUMN IF NOT EXISTS cajas_json TEXT"))
+        db.session.execute(text("ALTER TABLE armado_caja_movimientos ADD COLUMN IF NOT EXISTS accion VARCHAR(20)"))
+        db.session.execute(text("ALTER TABLE armado_caja_movimientos ADD COLUMN IF NOT EXISTS cantidad_anterior NUMERIC(10, 2)"))
+        db.session.execute(text("ALTER TABLE armado_caja_movimientos ADD COLUMN IF NOT EXISTS cantidad_nueva NUMERIC(10, 2)"))
+        db.session.execute(
+            text(
+                """
+                DO $$
+                DECLARE constraint_name text;
+                BEGIN
+                    SELECT tc.constraint_name
+                    INTO constraint_name
+                    FROM information_schema.table_constraints tc
+                    JOIN information_schema.constraint_column_usage ccu
+                      ON tc.constraint_name = ccu.constraint_name
+                     AND tc.table_schema = ccu.table_schema
+                    WHERE tc.table_name = 'armados_guias_salida'
+                      AND tc.constraint_type = 'UNIQUE'
+                      AND ccu.column_name = 'armado_id'
+                    LIMIT 1;
+                    IF constraint_name IS NOT NULL THEN
+                        EXECUTE format('ALTER TABLE armados_guias_salida DROP CONSTRAINT %I', constraint_name);
+                    END IF;
+                END $$;
+                """
+            )
+        )
         db.session.execute(
             text(
                 """

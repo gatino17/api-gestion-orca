@@ -923,18 +923,20 @@ class ArmadoGuiaSalida(db.Model):
         db.Integer,
         db.ForeignKey('armados.id_armado', ondelete="CASCADE"),
         nullable=False,
-        unique=True,
         index=True
     )
     numero_guia = db.Column(db.String(80), nullable=False)
     fecha_salida = db.Column(db.Date, nullable=False)
     fecha_recepcion_centro = db.Column(db.DateTime, nullable=True)
     observacion = db.Column(db.Text, nullable=True)
+    tipo_despacho = db.Column(db.String(20), nullable=False, default='total')
+    modalidad_salida = db.Column(db.String(30), nullable=False, default='guia')
+    cajas_json = db.Column(db.Text, nullable=True)
     estado = db.Column(db.String(40), nullable=False, default='en_transito_centro')
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    armado = db.relationship('Armado', backref=db.backref('guia_salida', uselist=False, cascade="all, delete-orphan"))
+    armado = db.relationship('Armado', backref=db.backref('guias_salida', cascade="all, delete-orphan"))
 
     def __repr__(self):
         return (
@@ -988,6 +990,9 @@ class ArmadoCajaMovimiento(db.Model):
     numero_serie = db.Column(db.String(60), nullable=True)
     caja = db.Column(db.String(50), nullable=False)
     cantidad = db.Column(db.Numeric(10, 2), default=0)
+    accion = db.Column(db.String(20), nullable=True)
+    cantidad_anterior = db.Column(db.Numeric(10, 2), nullable=True)
+    cantidad_nueva = db.Column(db.Numeric(10, 2), nullable=True)
     tecnico_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
     fecha = db.Column(db.DateTime, default=datetime.utcnow)
 

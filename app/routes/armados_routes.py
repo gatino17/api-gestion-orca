@@ -7,6 +7,7 @@ from datetime import datetime
 import unicodedata
 import jwt
 import re
+import json
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import joinedload
 
@@ -49,6 +50,13 @@ def emitir_actualizacion_armado(armado_id, tipo="armado"):
 def serializar_guia_salida(guia):
     if not guia:
         return None
+    try:
+        cajas = json.loads(guia.cajas_json) if guia.cajas_json else []
+    except Exception:
+        cajas = []
+    if not isinstance(cajas, list):
+        cajas = []
+    cajas = [str(c).strip() for c in cajas if str(c).strip()]
     return {
         "id_guia_salida": guia.id_guia_salida,
         "armado_id": guia.armado_id,
@@ -56,6 +64,10 @@ def serializar_guia_salida(guia):
         "fecha_salida": guia.fecha_salida.isoformat() if guia.fecha_salida else None,
         "fecha_recepcion_centro": guia.fecha_recepcion_centro.isoformat() if guia.fecha_recepcion_centro else None,
         "observacion": guia.observacion,
+        "tipo_despacho": guia.tipo_despacho,
+        "modalidad_salida": guia.modalidad_salida,
+        "cajas": cajas,
+        "total_cajas_despacho": len(cajas),
         "estado": guia.estado,
         "created_at": guia.created_at.isoformat() if guia.created_at else None,
         "updated_at": guia.updated_at.isoformat() if guia.updated_at else None,
@@ -261,12 +273,63 @@ def listar_guias_salida_armado():
     return jsonify([serializar_guia_salida(g) for g in guias]), 200
 
 
+@armados_blueprint.route('/guias-salida', methods=['POST'])
+def crear_guia_salida_armado():
+    data = request.json or {}
+    armado_id = data.get('armado_id')
+    try:
+        armado_id = int(armado_id or 0)
+    except Exception:
+        armado_id = 0
+    if not armado_id:
+        return jsonify({"message": "armado_id es requerido"}), 400
+    armado = Armado.query.get_or_404(armado_id)
+    cajas = data.get('cajas') if isinstance(data.get('cajas'), list) else []
+    cajas = [str(c).strip() for c in cajas if str(c).strip()]
+    if not cajas:
+        return jsonify({"message": "Debes seleccionar al menos una caja"}), 400
+
+    existentes = ArmadoGuiaSalida.query.filter_by(armado_id=armado_id).order_by(ArmadoGuiaSalida.id_guia_salida.asc()).all()
+    usadas = set()
+    for guia in existentes:
+        try:
+            cajas_existentes = json.loads(guia.cajas_json) if guia.cajas_json else []
+        except Exception:
+            cajas_existentes = []
+        usadas.update(str(c).strip() for c in cajas_existentes if str(c).strip())
+    repetidas = sorted(set(cajas).intersection(usadas))
+    if repetidas:
+        return jsonify({"message": f"Las cajas ya fueron despachadas: {', '.join(repetidas)}"}), 409
+
+    numero_guia = str(data.get('numero_guia') or '').strip() or f"GS-{str(armado_id).zfill(4)}-{len(existentes) + 1}"
+    fecha_salida = parse_date(data.get('fecha_salida')) or datetime.utcnow().date()
+    observacion = data.get('observacion')
+    estado = str(data.get('estado') or 'en_transito_centro').strip() or 'en_transito_centro'
+    tipo_despacho = str(data.get('tipo_despacho') or ('total' if len(cajas) == 1 else 'parcial')).strip().lower() or 'parcial'
+    modalidad_salida = str(data.get('modalidad_salida') or 'guia').strip().lower() or 'guia'
+
+    guia = ArmadoGuiaSalida(
+        armado_id=armado_id,
+        numero_guia=numero_guia,
+        fecha_salida=fecha_salida,
+        observacion=observacion,
+        estado=estado,
+        tipo_despacho=tipo_despacho,
+        modalidad_salida=modalidad_salida,
+        cajas_json=json.dumps(cajas, ensure_ascii=False),
+    )
+    db.session.add(guia)
+    db.session.commit()
+    emitir_actualizacion_armado(armado.id_armado, "guia_salida")
+    return jsonify(serializar_guia_salida(guia)), 201
+
+
 @armados_blueprint.route('/<int:id_armado>/guia-salida', methods=['GET'])
 def obtener_guia_salida_armado(id_armado):
     Armado.query.get_or_404(id_armado)
-    guia = ArmadoGuiaSalida.query.filter_by(armado_id=id_armado).first()
+    guia = ArmadoGuiaSalida.query.filter_by(armado_id=id_armado).order_by(ArmadoGuiaSalida.updated_at.desc(), ArmadoGuiaSalida.id_guia_salida.desc()).first()
     if not guia:
-        return jsonify({"message": "Guía de salida no encontrada"}), 404
+        return jsonify({"message": "Guia de salida no encontrada"}), 404
     return jsonify(serializar_guia_salida(guia)), 200
 
 
@@ -278,8 +341,12 @@ def guardar_guia_salida_armado(id_armado):
     fecha_salida = parse_date(data.get('fecha_salida')) or datetime.utcnow().date()
     observacion = data.get('observacion')
     estado = str(data.get('estado') or 'en_transito_centro').strip() or 'en_transito_centro'
+    tipo_despacho = str(data.get('tipo_despacho') or 'total').strip().lower() or 'total'
+    modalidad_salida = str(data.get('modalidad_salida') or 'guia').strip().lower() or 'guia'
+    cajas = data.get('cajas') if isinstance(data.get('cajas'), list) else []
+    cajas = [str(c).strip() for c in cajas if str(c).strip()]
 
-    guia = ArmadoGuiaSalida.query.filter_by(armado_id=id_armado).first()
+    guia = ArmadoGuiaSalida.query.filter_by(armado_id=id_armado).order_by(ArmadoGuiaSalida.updated_at.desc(), ArmadoGuiaSalida.id_guia_salida.desc()).first()
     if not guia:
         guia = ArmadoGuiaSalida(
             armado_id=id_armado,
@@ -287,6 +354,9 @@ def guardar_guia_salida_armado(id_armado):
             fecha_salida=fecha_salida,
             observacion=observacion,
             estado=estado,
+            tipo_despacho=tipo_despacho,
+            modalidad_salida=modalidad_salida,
+            cajas_json=json.dumps(cajas, ensure_ascii=False),
         )
         db.session.add(guia)
     else:
@@ -294,6 +364,9 @@ def guardar_guia_salida_armado(id_armado):
         guia.fecha_salida = fecha_salida
         guia.observacion = observacion
         guia.estado = estado
+        guia.tipo_despacho = tipo_despacho
+        guia.modalidad_salida = modalidad_salida
+        guia.cajas_json = json.dumps(cajas, ensure_ascii=False)
         guia.updated_at = datetime.utcnow()
 
     db.session.commit()
@@ -301,12 +374,56 @@ def guardar_guia_salida_armado(id_armado):
     return jsonify(serializar_guia_salida(guia)), 200
 
 
+@armados_blueprint.route('/guias-salida/<int:id_guia_salida>', methods=['PUT'])
+def actualizar_guia_salida(id_guia_salida):
+    guia = ArmadoGuiaSalida.query.get_or_404(id_guia_salida)
+    data = request.json or {}
+    numero_guia = str(data.get('numero_guia') or '').strip() or guia.numero_guia
+    fecha_salida = parse_date(data.get('fecha_salida')) or guia.fecha_salida or datetime.utcnow().date()
+    observacion = data.get('observacion')
+    estado = str(data.get('estado') or guia.estado or 'en_transito_centro').strip() or 'en_transito_centro'
+    tipo_despacho = str(data.get('tipo_despacho') or guia.tipo_despacho or 'total').strip().lower() or 'total'
+    modalidad_salida = str(data.get('modalidad_salida') or guia.modalidad_salida or 'guia').strip().lower() or 'guia'
+    cajas = data.get('cajas') if isinstance(data.get('cajas'), list) else None
+
+    if cajas is not None:
+        cajas = [str(c).strip() for c in cajas if str(c).strip()]
+        if not cajas:
+            return jsonify({"message": "Debes seleccionar al menos una caja"}), 400
+        otras = ArmadoGuiaSalida.query.filter(
+            ArmadoGuiaSalida.armado_id == guia.armado_id,
+            ArmadoGuiaSalida.id_guia_salida != guia.id_guia_salida
+        ).all()
+        usadas = set()
+        for item in otras:
+            try:
+                cajas_otras = json.loads(item.cajas_json) if item.cajas_json else []
+            except Exception:
+                cajas_otras = []
+            usadas.update(str(c).strip() for c in cajas_otras if str(c).strip())
+        repetidas = sorted(set(cajas).intersection(usadas))
+        if repetidas:
+            return jsonify({"message": f"Las cajas ya fueron despachadas: {', '.join(repetidas)}"}), 409
+        guia.cajas_json = json.dumps(cajas, ensure_ascii=False)
+
+    guia.numero_guia = numero_guia
+    guia.fecha_salida = fecha_salida
+    guia.observacion = observacion
+    guia.estado = estado
+    guia.tipo_despacho = tipo_despacho
+    guia.modalidad_salida = modalidad_salida
+    guia.updated_at = datetime.utcnow()
+    db.session.commit()
+    emitir_actualizacion_armado(guia.armado_id, "guia_salida")
+    return jsonify(serializar_guia_salida(guia)), 200
+
+
 @armados_blueprint.route('/<int:id_armado>/guia-salida/recepcion-centro', methods=['POST'])
 def marcar_recepcion_centro_guia(id_armado):
     Armado.query.get_or_404(id_armado)
-    guia = ArmadoGuiaSalida.query.filter_by(armado_id=id_armado).first()
+    guia = ArmadoGuiaSalida.query.filter_by(armado_id=id_armado).order_by(ArmadoGuiaSalida.updated_at.desc(), ArmadoGuiaSalida.id_guia_salida.desc()).first()
     if not guia:
-        return jsonify({"message": "Guía de salida no encontrada"}), 404
+        return jsonify({"message": "Guia de salida no encontrada"}), 404
 
     data = request.json or {}
     fecha_recepcion = data.get('fecha_recepcion_centro')
@@ -324,17 +441,45 @@ def marcar_recepcion_centro_guia(id_armado):
     return jsonify(serializar_guia_salida(guia)), 200
 
 
+@armados_blueprint.route('/guias-salida/<int:id_guia_salida>/recepcion-centro', methods=['POST'])
+def marcar_recepcion_centro_guia_por_id(id_guia_salida):
+    guia = ArmadoGuiaSalida.query.get_or_404(id_guia_salida)
+    data = request.json or {}
+    fecha_recepcion = data.get('fecha_recepcion_centro')
+    if fecha_recepcion:
+        try:
+            guia.fecha_recepcion_centro = datetime.fromisoformat(str(fecha_recepcion).replace("Z", "+00:00"))
+        except ValueError:
+            guia.fecha_recepcion_centro = datetime.utcnow()
+    else:
+        guia.fecha_recepcion_centro = datetime.utcnow()
+    guia.estado = 'recepcionado_en_centro'
+    guia.updated_at = datetime.utcnow()
+    db.session.commit()
+    emitir_actualizacion_armado(guia.armado_id, "guia_salida")
+    return jsonify(serializar_guia_salida(guia)), 200
+
+
 @armados_blueprint.route('/<int:id_armado>/guia-salida', methods=['DELETE'])
 def eliminar_guia_salida_armado(id_armado):
     Armado.query.get_or_404(id_armado)
-    guia = ArmadoGuiaSalida.query.filter_by(armado_id=id_armado).first()
+    guia = ArmadoGuiaSalida.query.filter_by(armado_id=id_armado).order_by(ArmadoGuiaSalida.updated_at.desc(), ArmadoGuiaSalida.id_guia_salida.desc()).first()
     if not guia:
-        return jsonify({"message": "Guía de salida no encontrada"}), 404
+        return jsonify({"message": "Guia de salida no encontrada"}), 404
     db.session.delete(guia)
     db.session.commit()
     emitir_actualizacion_armado(id_armado, "guia_salida")
-    return jsonify({"message": "Guía de salida eliminada"}), 200
+    return jsonify({"message": "Guia de salida eliminada"}), 200
 
+
+@armados_blueprint.route('/guias-salida/<int:id_guia_salida>', methods=['DELETE'])
+def eliminar_guia_salida_por_id(id_guia_salida):
+    guia = ArmadoGuiaSalida.query.get_or_404(id_guia_salida)
+    armado_id = guia.armado_id
+    db.session.delete(guia)
+    db.session.commit()
+    emitir_actualizacion_armado(armado_id, "guia_salida")
+    return jsonify({"message": "Guia de salida eliminada"}), 200
 
 @armados_blueprint.route('/<int:id_armado>', methods=['PUT'])
 def actualizar_armado(id_armado):
@@ -410,8 +555,10 @@ def guardar_materiales(id_armado):
 
         id_material = item.get("id_material")
         cantidad = float(item.get("cantidad") or 0)
+        cantidad_delta = float(item.get("cantidad_delta") or 0)
         caja = item.get("caja") or 'Caja 1'
         caja_tecnico_id = item.get("caja_tecnico_id")
+        accion_material = normalizar_texto(item.get("accion_material") or item.get("accion") or "")
         key = normalizar_texto(nombre)
         actual = None
 
@@ -429,6 +576,27 @@ def guardar_materiales(id_armado):
         if actual:
             cant_actual = float(actual.cantidad or 0)
             caja_actual = actual.caja or 'Caja 1'
+            if accion_material == "incremento":
+                if cantidad_delta == 0:
+                    continue
+                actual.cantidad = cant_actual + cantidad_delta
+                if caja_tecnico_id is not None:
+                    actual.caja_tecnico_id = caja_tecnico_id
+                db.session.add(ArmadoCajaMovimiento(
+                    armado_id=id_armado,
+                    tipo="material",
+                    item_id=actual.id_material,
+                    nombre_item=actual.nombre,
+                    caja=actual.caja or "Caja 1",
+                    cantidad=cantidad_delta,
+                    accion="incremento",
+                    cantidad_anterior=cant_actual,
+                    cantidad_nueva=actual.cantidad or 0,
+                    tecnico_id=actual.caja_tecnico_id
+                ))
+                cambios += 1
+                continue
+
             cambio = (cant_actual != cantidad) or (caja_actual != caja)
             if not cambio:
                 continue
@@ -445,6 +613,9 @@ def guardar_materiales(id_armado):
                 nombre_item=actual.nombre,
                 caja=actual.caja or "Caja 1",
                 cantidad=actual.cantidad or 0,
+                accion="ajuste",
+                cantidad_anterior=cant_actual,
+                cantidad_nueva=actual.cantidad or 0,
                 tecnico_id=actual.caja_tecnico_id
             ))
             cambios += 1
@@ -467,6 +638,9 @@ def guardar_materiales(id_armado):
             nombre_item=nuevo.nombre,
             caja=nuevo.caja or "Caja 1",
             cantidad=nuevo.cantidad or 0,
+            accion="creacion",
+            cantidad_anterior=0,
+            cantidad_nueva=nuevo.cantidad or 0,
             tecnico_id=nuevo.caja_tecnico_id
         ))
         por_nombre[key] = nuevo
@@ -490,6 +664,9 @@ def listar_movimientos(id_armado):
             "nombre_item": m.nombre_item,
             "caja": m.caja,
             "cantidad": float(m.cantidad or 0),
+            "accion": m.accion,
+            "cantidad_anterior": float(m.cantidad_anterior or 0) if m.cantidad_anterior is not None else None,
+            "cantidad_nueva": float(m.cantidad_nueva or 0) if m.cantidad_nueva is not None else None,
             "tecnico_id": m.tecnico_id,
             "tecnico_nombre": m.tecnico.name if m.tecnico else None,
             "fecha": m.fecha.isoformat()
@@ -573,6 +750,9 @@ def listar_movimientos_recientes():
             "numero_serie": m.numero_serie,
             "caja": m.caja,
             "cantidad": float(m.cantidad or 0),
+            "accion": m.accion,
+            "cantidad_anterior": float(m.cantidad_anterior or 0) if m.cantidad_anterior is not None else None,
+            "cantidad_nueva": float(m.cantidad_nueva or 0) if m.cantidad_nueva is not None else None,
             "tecnico_id": m.tecnico_id,
             "tecnico_nombre": m.tecnico.name if m.tecnico else None,
             "fecha": m.fecha.isoformat(),
