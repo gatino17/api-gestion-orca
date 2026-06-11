@@ -159,6 +159,14 @@ def create_app():
             text(
                 """
                 ALTER TABLE armados
+                ADD COLUMN IF NOT EXISTS cajas_estado_json TEXT
+                """
+            )
+        )
+        db.session.execute(
+            text(
+                """
+                ALTER TABLE armados
                 ADD COLUMN IF NOT EXISTS check_tecnico_fecha DATE
                 """
             )
