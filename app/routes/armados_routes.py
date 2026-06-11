@@ -40,6 +40,41 @@ def derivar_codigo_desde_serie(serie):
     return (solo_numeros[:5] if solo_numeros else raw[:5]) or None
 
 
+def parse_cajas_estado(raw):
+    if raw is None:
+        return {}
+    data = raw
+    if isinstance(raw, str):
+        try:
+            data = json.loads(raw)
+        except Exception:
+            return {}
+    if not isinstance(data, dict):
+        return {}
+    resultado = {}
+    for key, value in data.items():
+        nombre = str(key or "").strip()
+        if not nombre:
+            continue
+        estado = str(value or "").strip().lower()
+        resultado[nombre] = "cerrada" if estado == "cerrada" else "abierta"
+    return resultado
+
+
+def nombre_caja_seguro(value):
+    nombre = str(value or "").strip()
+    return nombre or "Pendiente de caja"
+
+
+def es_caja_real(value):
+    return normalizar_texto(nombre_caja_seguro(value)) != normalizar_texto("Pendiente de caja")
+
+
+def contar_cajas_reales(valores):
+    unicas = {nombre_caja_seguro(value) for value in (valores or []) if nombre_caja_seguro(value)}
+    return len([nombre for nombre in unicas if es_caja_real(nombre)])
+
+
 def emitir_actualizacion_armado(armado_id, tipo="armado"):
     emit_armado_event(
         "armado_updated",
@@ -56,7 +91,7 @@ def serializar_guia_salida(guia):
         cajas = []
     if not isinstance(cajas, list):
         cajas = []
-    cajas = [str(c).strip() for c in cajas if str(c).strip()]
+    cajas = [nombre_caja_seguro(c) for c in cajas if nombre_caja_seguro(c)]
     return {
         "id_guia_salida": guia.id_guia_salida,
         "armado_id": guia.armado_id,
@@ -67,7 +102,7 @@ def serializar_guia_salida(guia):
         "tipo_despacho": guia.tipo_despacho,
         "modalidad_salida": guia.modalidad_salida,
         "cajas": cajas,
-        "total_cajas_despacho": len(cajas),
+        "total_cajas_despacho": contar_cajas_reales(cajas),
         "estado": guia.estado,
         "created_at": guia.created_at.isoformat() if guia.created_at else None,
         "updated_at": guia.updated_at.isoformat() if guia.updated_at else None,
@@ -161,10 +196,14 @@ def listar_armados():
         historial_tecnicos = [p.tecnico.name if p.tecnico else f"ID {p.tecnico_id}" for p in participaciones]
         tecnicos_activos = _serializar_tecnicos_activos(armado)
         # calcular total de cajas (equipos del centro + materiales del armado)
-        cajas_equipos = {e.caja or 'Caja 1' for e in EquiposIP.query.filter_by(centro_id=armado.centro_id).all()}
-        cajas_materiales = {m.caja or 'Caja 1' for m in ArmadoMaterial.query.filter_by(armado_id=armado.id_armado).all()}
-        total_cajas_calc = len(cajas_equipos.union(cajas_materiales)) or 0
-        total_cajas = max(total_cajas_calc, int(armado.total_cajas_manual or 0))
+        cajas_equipos = [e.caja for e in EquiposIP.query.filter_by(centro_id=armado.centro_id).all()]
+        cajas_materiales = [m.caja for m in ArmadoMaterial.query.filter_by(armado_id=armado.id_armado).all()]
+        cajas_estado = list(parse_cajas_estado(armado.cajas_estado_json).keys())
+        if cajas_estado:
+            total_cajas_calc = contar_cajas_reales(cajas_estado) or 0
+        else:
+            total_cajas_calc = contar_cajas_reales([*cajas_equipos, *cajas_materiales]) or 0
+        total_cajas = total_cajas_calc if total_cajas_calc > 0 else int(armado.total_cajas_manual or 0)
 
         # fecha_inicio real: si hay fecha_inicio ya fijada úsala, si no, la primera fecha de movimiento o la de asignación
         primera_mov = (
@@ -195,6 +234,7 @@ def listar_armados():
             "check_tecnico_fecha": armado.check_tecnico_fecha,
             "observacion": armado.observacion,
             "total_cajas": total_cajas,
+            "cajas_estado": parse_cajas_estado(armado.cajas_estado_json),
             "tecnicos_historial": historial_tecnicos,
             "tecnicos_asignados": tecnicos_activos
         })
@@ -514,6 +554,8 @@ def actualizar_armado(id_armado):
             armado.total_cajas_manual = int(data.get('total_cajas_manual') or 0)
         except (TypeError, ValueError):
             armado.total_cajas_manual = armado.total_cajas_manual
+    if 'cajas_estado' in data:
+        armado.cajas_estado_json = json.dumps(parse_cajas_estado(data.get('cajas_estado')), ensure_ascii=False)
 
     db.session.commit()
     emitir_actualizacion_armado(armado.id_armado, "armado")
@@ -662,6 +704,7 @@ def listar_movimientos(id_armado):
             "tipo": m.tipo,
             "item_id": m.item_id,
             "nombre_item": m.nombre_item,
+            "numero_serie": m.numero_serie,
             "caja": m.caja,
             "cantidad": float(m.cantidad or 0),
             "accion": m.accion,
