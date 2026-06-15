@@ -182,6 +182,22 @@ def create_app():
         db.session.execute(
             text(
                 """
+                ALTER TABLE equipos_ip
+                ADD COLUMN IF NOT EXISTS estado_registro VARCHAR(20)
+                """
+            )
+        )
+        db.session.execute(
+            text(
+                """
+                ALTER TABLE equipos_ip
+                ADD COLUMN IF NOT EXISTS observacion_registro TEXT
+                """
+            )
+        )
+        db.session.execute(
+            text(
+                """
                 UPDATE centros
                 SET es_central = FALSE
                 WHERE es_central IS NULL

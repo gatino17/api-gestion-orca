@@ -15,6 +15,15 @@ def tocar_fecha_inicio(armado_id):
         armado.fecha_inicio = datetime.utcnow().date()
         db.session.add(armado)
 
+
+def caja_movimiento_equipo(equipo):
+    estado_registro = str(getattr(equipo, 'estado_registro', '') or '').strip().lower()
+    if estado_registro == 'no_aplica':
+        return 'N/A'
+    if estado_registro == 'pendiente':
+        return 'Pendiente'
+    return equipo.caja or "Caja 1"
+
 # Obtener todos los equipos o equipos por centro_id
 @equipos_bp.route('/', methods=['GET'])
 def obtener_equipos():
@@ -36,7 +45,9 @@ def obtener_equipos():
             "estado": equipo.estado,
             "caja": equipo.caja,
             "caja_tecnico_id": equipo.caja_tecnico_id,
-            "caja_tecnico_nombre": equipo.caja_tecnico.name if equipo.caja_tecnico else None
+            "caja_tecnico_nombre": equipo.caja_tecnico.name if equipo.caja_tecnico else None,
+            "estado_registro": equipo.estado_registro or "normal",
+            "observacion_registro": equipo.observacion_registro
         } for equipo in equipos
     ]
     
@@ -93,7 +104,9 @@ def crear_equipo():
             numero_serie=data.get('numero_serie'),
             estado=data.get('estado'),
             caja=data.get('caja'),
-            caja_tecnico_id=data.get('caja_tecnico_id')
+            caja_tecnico_id=data.get('caja_tecnico_id'),
+            estado_registro=data.get('estado_registro') or 'normal',
+            observacion_registro=data.get('observacion_registro')
         )
         db.session.add(nuevo_equipo)
         # registrar movimiento si hay armado asociado opcionalmente
@@ -106,7 +119,7 @@ def crear_equipo():
                 item_id=0,  # aún no tenemos id, lo llenamos tras flush
                 nombre_item=data.get('nombre'),
                 numero_serie=nuevo_equipo.numero_serie,
-                caja=nuevo_equipo.caja or "Caja 1",
+	                caja=caja_movimiento_equipo(nuevo_equipo),
                 cantidad=1,
                 tecnico_id=data.get('caja_tecnico_id')
             ))
@@ -141,6 +154,10 @@ def actualizar_equipo(id_equipo):
         equipo.estado = data.get('estado', equipo.estado)
         equipo.caja = data.get('caja', equipo.caja)
         equipo.caja_tecnico_id = data.get('caja_tecnico_id', equipo.caja_tecnico_id)
+        if 'estado_registro' in data:
+            equipo.estado_registro = data.get('estado_registro') or 'normal'
+        if 'observacion_registro' in data:
+            equipo.observacion_registro = data.get('observacion_registro')
         # registrar movimiento si viene armado_id
         armado_id = data.get('armado_id')
         if armado_id:
@@ -151,7 +168,7 @@ def actualizar_equipo(id_equipo):
                 item_id=equipo.id_equipo,
                 nombre_item=equipo.nombre,
                 numero_serie=equipo.numero_serie,
-                caja=equipo.caja or "Caja 1",
+	                caja=caja_movimiento_equipo(equipo),
                 cantidad=1,
                 tecnico_id=equipo.caja_tecnico_id
             ))

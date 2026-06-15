@@ -313,7 +313,9 @@ def obtener_detalles_centro():
                 "estado": equipo.estado,
                 "caja": equipo.caja,
                 "caja_tecnico_id": equipo.caja_tecnico_id,
-                "caja_tecnico_nombre": equipo.caja_tecnico.name if equipo.caja_tecnico else None
+                "caja_tecnico_nombre": equipo.caja_tecnico.name if equipo.caja_tecnico else None,
+                "estado_registro": equipo.estado_registro or "normal",
+                "observacion_registro": equipo.observacion_registro
             } for equipo in equipos
         ],
         "conexiones": [

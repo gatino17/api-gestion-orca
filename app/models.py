@@ -114,6 +114,8 @@ class EquiposIP(db.Model):
     estado = db.Column(db.String(20), nullable=True)
     caja = db.Column(db.String(50), nullable=True)
     caja_tecnico_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    estado_registro = db.Column(db.String(20), nullable=True)
+    observacion_registro = db.Column(db.Text, nullable=True)
 
     # Relación con Centro
     centro = db.relationship('Centro', backref=db.backref('equipos_ip', cascade="all, delete-orphan"))
