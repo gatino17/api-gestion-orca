@@ -13,6 +13,7 @@ from sqlalchemy.orm import joinedload
 
 armados_blueprint = Blueprint('armados', __name__)
 SECRET_KEY = "remoto753524"
+EQUIPOS_MIGRADOS_A_MATERIALES = {"bandeja rack - tornillos"}
 
 
 def normalizar_texto(valor):
@@ -73,6 +74,40 @@ def es_caja_real(value):
 def contar_cajas_reales(valores):
     unicas = {nombre_caja_seguro(value) for value in (valores or []) if nombre_caja_seguro(value)}
     return len([nombre for nombre in unicas if es_caja_real(nombre)])
+
+
+def normalizar_estado_registro_equipo(value):
+    estado = str(value or "").strip().lower()
+    if estado == "no_aplica":
+        return "no_aplica"
+    if estado == "pendiente":
+        return "pendiente"
+    return "normal"
+
+
+def equipo_migrado_a_material(nombre):
+    return normalizar_texto(nombre) in EQUIPOS_MIGRADOS_A_MATERIALES
+
+
+def calcular_resumen_armado_equipos(centro_id):
+    equipos = [
+        e for e in EquiposIP.query.filter_by(centro_id=centro_id).all()
+        if not equipo_migrado_a_material(e.nombre)
+    ]
+    total = len(equipos)
+    con_serie = len([e for e in equipos if str(e.numero_serie or "").strip()])
+    no_aplica = len([e for e in equipos if normalizar_estado_registro_equipo(e.estado_registro) == "no_aplica"])
+    pendientes = len([e for e in equipos if normalizar_estado_registro_equipo(e.estado_registro) == "pendiente"])
+    resueltos = con_serie + no_aplica
+    porcentaje = round((resueltos / total) * 100) if total else 0
+    return {
+        "total": total,
+        "con_serie": con_serie,
+        "no_aplica": no_aplica,
+        "pendientes": pendientes,
+        "resueltos": resueltos,
+        "porcentaje": porcentaje,
+    }
 
 
 def emitir_actualizacion_armado(armado_id, tipo="armado"):
@@ -195,6 +230,7 @@ def listar_armados():
         ).all()
         historial_tecnicos = [p.tecnico.name if p.tecnico else f"ID {p.tecnico_id}" for p in participaciones]
         tecnicos_activos = _serializar_tecnicos_activos(armado)
+        resumen_armado = calcular_resumen_armado_equipos(armado.centro_id)
         # calcular total de cajas (equipos del centro + materiales del armado)
         cajas_equipos = [e.caja for e in EquiposIP.query.filter_by(centro_id=armado.centro_id).all()]
         cajas_materiales = [m.caja for m in ArmadoMaterial.query.filter_by(armado_id=armado.id_armado).all()]
@@ -234,6 +270,12 @@ def listar_armados():
             "check_tecnico_fecha": armado.check_tecnico_fecha,
             "observacion": armado.observacion,
             "total_cajas": total_cajas,
+            "armado_total_equipos": resumen_armado["total"],
+            "armado_equipos_con_serie": resumen_armado["con_serie"],
+            "armado_equipos_no_aplica": resumen_armado["no_aplica"],
+            "armado_equipos_pendientes": resumen_armado["pendientes"],
+            "armado_equipos_resueltos": resumen_armado["resueltos"],
+            "porcentaje_armado": resumen_armado["porcentaje"],
             "cajas_estado": parse_cajas_estado(armado.cajas_estado_json),
             "tecnicos_historial": historial_tecnicos,
             "tecnicos_asignados": tecnicos_activos
