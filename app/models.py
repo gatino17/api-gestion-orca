@@ -977,6 +977,8 @@ class ArmadoMaterial(db.Model):
     cantidad = db.Column(db.Numeric(10, 2), default=0)
     caja = db.Column(db.String(50), default='Caja 1')
     caja_tecnico_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    estado_registro = db.Column(db.String(20), nullable=True)
+    observacion_registro = db.Column(db.Text, nullable=True)
 
     armado = db.relationship('Armado', backref=db.backref('materiales', cascade="all, delete-orphan"))
     caja_tecnico = db.relationship('User', foreign_keys=[caja_tecnico_id], backref='materiales_caja_asignados')

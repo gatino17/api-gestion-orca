@@ -35,6 +35,10 @@ EQUIPOS_PREDEF = [
     "Monitor",
     "Rack 9U - tuercas - tornillos",
     "Zapatilla Rack (PDU)",
+    "PC cliente",
+    "Rack 2",
+    "Ubiquiti TX",
+    "Ubiquiti RX",
     "Parlantes",
     "Sensor Magnetico",
     "Mouse",
@@ -173,6 +177,10 @@ def normalizar_estado_registro_equipo(value):
     if estado == "pendiente":
         return "pendiente"
     return "normal"
+
+
+def normalizar_estado_registro_material(value):
+    return normalizar_estado_registro_equipo(value)
 
 
 def normalizar_nombre_equipo(nombre):
@@ -722,7 +730,9 @@ def listar_materiales(id_armado):
     materiales = ArmadoMaterial.query.filter_by(armado_id=id_armado).order_by(ArmadoMaterial.id_material.asc()).all()
     data = [{"id_material": m.id_material, "nombre": m.nombre, "cantidad": float(m.cantidad or 0), "caja": m.caja,
              "caja_tecnico_id": m.caja_tecnico_id,
-             "caja_tecnico_nombre": m.caja_tecnico.name if m.caja_tecnico else None} for m in materiales]
+             "caja_tecnico_nombre": m.caja_tecnico.name if m.caja_tecnico else None,
+             "estado_registro": m.estado_registro or "normal",
+             "observacion_registro": m.observacion_registro} for m in materiales]
     return jsonify(data), 200
 
 
@@ -747,6 +757,8 @@ def guardar_materiales(id_armado):
         cantidad_delta = float(item.get("cantidad_delta") or 0)
         caja = item.get("caja") or 'Caja 1'
         caja_tecnico_id = item.get("caja_tecnico_id")
+        estado_registro = normalizar_estado_registro_material(item.get("estado_registro"))
+        observacion_registro = item.get("observacion_registro")
         accion_material = normalizar_texto(item.get("accion_material") or item.get("accion") or "")
         key = normalizar_texto(nombre)
         actual = None
@@ -771,6 +783,8 @@ def guardar_materiales(id_armado):
                 actual.cantidad = cant_actual + cantidad_delta
                 if caja_tecnico_id is not None:
                     actual.caja_tecnico_id = caja_tecnico_id
+                actual.estado_registro = estado_registro
+                actual.observacion_registro = observacion_registro if estado_registro == "pendiente" else None
                 db.session.add(ArmadoCajaMovimiento(
                     armado_id=id_armado,
                     tipo="material",
@@ -786,12 +800,19 @@ def guardar_materiales(id_armado):
                 cambios += 1
                 continue
 
-            cambio = (cant_actual != cantidad) or (caja_actual != caja)
+            cambio = (
+                (cant_actual != cantidad) or
+                (caja_actual != caja) or
+                (normalizar_estado_registro_material(actual.estado_registro) != estado_registro) or
+                ((actual.observacion_registro or None) != (observacion_registro if estado_registro == "pendiente" else None))
+            )
             if not cambio:
                 continue
 
             actual.cantidad = cantidad
             actual.caja = caja
+            actual.estado_registro = estado_registro
+            actual.observacion_registro = observacion_registro if estado_registro == "pendiente" else None
             if caja_tecnico_id is not None:
                 actual.caja_tecnico_id = caja_tecnico_id
 
@@ -815,7 +836,9 @@ def guardar_materiales(id_armado):
             nombre=nombre,
             cantidad=cantidad,
             caja=caja,
-            caja_tecnico_id=caja_tecnico_id
+            caja_tecnico_id=caja_tecnico_id,
+            estado_registro=estado_registro,
+            observacion_registro=observacion_registro if estado_registro == "pendiente" else None
         )
         db.session.add(nuevo)
         db.session.flush()
