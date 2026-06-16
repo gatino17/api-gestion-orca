@@ -14,6 +14,96 @@ from sqlalchemy.orm import joinedload
 armados_blueprint = Blueprint('armados', __name__)
 SECRET_KEY = "remoto753524"
 EQUIPOS_MIGRADOS_A_MATERIALES = {"bandeja rack - tornillos"}
+SINONIMOS_EQUIPOS = {
+    "ip pc": "pc",
+    "ip pc nvr": "pc",
+    "puerta de enlace": "router",
+    "router (puerta de enlace)": "router",
+    "mastil": "mastil",
+    "switch cisco + adaptador": "switch (cisco)",
+    "switch cisco": "switch (cisco)",
+}
+EQUIPOS_PREDEF = [
+    "PC",
+    "Router",
+    "Switch",
+    "Switch (Cisco)",
+    "Switch raqueable",
+    "Switch POE",
+    "Mass",
+    "Netio",
+    "Monitor",
+    "Rack 9U - tuercas - tornillos",
+    "Zapatilla Rack (PDU)",
+    "Parlantes",
+    "Sensor Magnetico",
+    "Mouse",
+    "Teclado",
+    "Tablero 1200x800x300",
+    "Tablero 1000x600x300",
+    "Tablero 750x500x250",
+    "Inversor cargador Victron",
+    "Panel Victron",
+    "Bateria 1",
+    "Bateria 2",
+    "Bateria 3",
+    "Bateria 4",
+    "Bateria 5",
+    "Bateria 6",
+    "Sensor magnetico respaldo",
+    "Sensor magnetico cargador",
+    "Cargador 1",
+    "Cargador 2",
+    "Tablero Cargador 750x500x250",
+    "Tablero 500x400x200",
+    "Baliza Interior",
+    "Bocina Interior",
+    "Baliza Exterior 1",
+    "Baliza Exterior 2",
+    "Bocina Exterior 1",
+    "Bocina Exterior 2",
+    "Foco led 1 150W",
+    "Foco led 2 150W",
+    "Foco led 1 50W",
+    "Foco led 2 50W",
+    "Fuente poder 12V",
+    "Axis P8221",
+    "Tablero Derivacion (400x300x200)",
+    "Radar 1",
+    "Radar 2",
+    "Cable rj radar 1",
+    "Cable rj radar 2",
+    "Soporte radar 1",
+    "Soporte radar 2",
+    "Camara PTZ Laser",
+    "Camara PTZ Laser 2",
+    "Camara Modulo",
+    "Camara Silo 1",
+    "Camara Silo 2",
+    "Camara Ensinerador",
+    "Ensilaje interior",
+    "Ensilaje exterior",
+    "Camara Popa",
+    "Camara acceso 1",
+    "Camara acceso 2",
+    "Camara acceso 3",
+    "Camara acceso 4",
+    "Enlace Ubiquiti",
+    "UPS online",
+    "Tablero Camara (500x700x250)",
+    "Poe Power 1",
+    "Poe Power 2",
+    "Poe Power 3",
+    "Poe Power 4",
+    "Poe Power 5",
+    "Switch POE 1",
+    "Camara Interior",
+    "Switch 1",
+    "Switch 2",
+    "Switch 3",
+    "Switch POE 2",
+    "Switch 4",
+]
 
 
 def normalizar_texto(valor):
@@ -85,8 +175,13 @@ def normalizar_estado_registro_equipo(value):
     return "normal"
 
 
+def normalizar_nombre_equipo(nombre):
+    valor = normalizar_texto(nombre)
+    return SINONIMOS_EQUIPOS.get(valor, valor)
+
+
 def equipo_migrado_a_material(nombre):
-    return normalizar_texto(nombre) in EQUIPOS_MIGRADOS_A_MATERIALES
+    return normalizar_nombre_equipo(nombre) in EQUIPOS_MIGRADOS_A_MATERIALES
 
 
 def calcular_resumen_armado_equipos(centro_id):
@@ -94,10 +189,20 @@ def calcular_resumen_armado_equipos(centro_id):
         e for e in EquiposIP.query.filter_by(centro_id=centro_id).all()
         if not equipo_migrado_a_material(e.nombre)
     ]
-    total = len(equipos)
-    con_serie = len([e for e in equipos if str(e.numero_serie or "").strip()])
-    no_aplica = len([e for e in equipos if normalizar_estado_registro_equipo(e.estado_registro) == "no_aplica"])
-    pendientes = len([e for e in equipos if normalizar_estado_registro_equipo(e.estado_registro) == "pendiente"])
+    mapa = {normalizar_nombre_equipo(e.nombre): e for e in equipos}
+    predef_norm = {normalizar_nombre_equipo(nombre) for nombre in EQUIPOS_PREDEF}
+
+    base = []
+    for nombre in EQUIPOS_PREDEF:
+        found = mapa.get(normalizar_nombre_equipo(nombre))
+        base.append(found)
+
+    extras = [e for e in equipos if normalizar_nombre_equipo(e.nombre) not in predef_norm]
+    resumen = [e for e in [*base, *extras] if e is not None]
+    total = len(EQUIPOS_PREDEF) + len(extras)
+    con_serie = len([e for e in resumen if str(e.numero_serie or "").strip()])
+    no_aplica = len([e for e in resumen if normalizar_estado_registro_equipo(e.estado_registro) == "no_aplica"])
+    pendientes = len([e for e in resumen if normalizar_estado_registro_equipo(e.estado_registro) == "pendiente"])
     resueltos = con_serie + no_aplica
     porcentaje = round((resueltos / total) * 100) if total else 0
     return {
