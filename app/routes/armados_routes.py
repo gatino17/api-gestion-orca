@@ -39,6 +39,7 @@ EQUIPOS_PREDEF = [
     "Rack 2",
     "Ubiquiti TX",
     "Ubiquiti RX",
+    "Pantalla",
     "Parlantes",
     "Sensor Magnetico",
     "Mouse",
@@ -116,6 +117,17 @@ def normalizar_texto(valor):
         return ""
     texto = unicodedata.normalize("NFD", texto)
     return "".join(ch for ch in texto if unicodedata.category(ch) != "Mn")
+
+
+def normalizar_nombre_material(nombre):
+    return normalizar_texto(nombre).replace("mesa rack", "mesa respaldo")
+
+
+def canonizar_nombre_material(nombre):
+    texto = (nombre or "").strip()
+    if not texto:
+        return ""
+    return "Mesa respaldo" if normalizar_nombre_material(texto) == "mesa respaldo" else texto
 
 
 def parse_date(value):
@@ -220,6 +232,33 @@ def calcular_resumen_armado_equipos(centro_id):
         "pendientes": pendientes,
         "resueltos": resueltos,
         "porcentaje": porcentaje,
+    }
+
+
+def calcular_detalle_pendientes_armado(centro_id):
+    equipos = [
+        e for e in EquiposIP.query.filter_by(centro_id=centro_id).all()
+        if not equipo_migrado_a_material(e.nombre)
+        and normalizar_estado_registro_equipo(e.estado_registro) == "pendiente"
+    ]
+    items = [
+        {
+            "tipo": "equipo",
+            "nombre": str(e.nombre or "").strip() or "Equipo",
+            "observacion": str(e.observacion_registro or "").strip()
+        }
+        for e in equipos
+    ]
+    nombres = [item["nombre"] for item in items if item.get("nombre")]
+    if not nombres:
+        resumen = ""
+    elif len(nombres) <= 2:
+        resumen = ", ".join(nombres)
+    else:
+        resumen = f"{', '.join(nombres[:2])} y {len(nombres) - 2} mas"
+    return {
+        "items": items,
+        "resumen": resumen,
     }
 
 
@@ -344,6 +383,7 @@ def listar_armados():
         historial_tecnicos = [p.tecnico.name if p.tecnico else f"ID {p.tecnico_id}" for p in participaciones]
         tecnicos_activos = _serializar_tecnicos_activos(armado)
         resumen_armado = calcular_resumen_armado_equipos(armado.centro_id)
+        detalle_pendientes = calcular_detalle_pendientes_armado(armado.centro_id)
         # calcular total de cajas (equipos del centro + materiales del armado)
         cajas_equipos = [e.caja for e in EquiposIP.query.filter_by(centro_id=armado.centro_id).all()]
         cajas_materiales = [m.caja for m in ArmadoMaterial.query.filter_by(armado_id=armado.id_armado).all()]
@@ -389,6 +429,8 @@ def listar_armados():
             "armado_equipos_pendientes": resumen_armado["pendientes"],
             "armado_equipos_resueltos": resumen_armado["resueltos"],
             "porcentaje_armado": resumen_armado["porcentaje"],
+            "armado_pendientes_resumen": detalle_pendientes["resumen"],
+            "armado_pendientes_detalle": detalle_pendientes["items"],
             "cajas_estado": parse_cajas_estado(armado.cajas_estado_json),
             "tecnicos_historial": historial_tecnicos,
             "tecnicos_asignados": tecnicos_activos
@@ -728,7 +770,7 @@ def eliminar_armado(id_armado):
 @armados_blueprint.route('/<int:id_armado>/materiales', methods=['GET'])
 def listar_materiales(id_armado):
     materiales = ArmadoMaterial.query.filter_by(armado_id=id_armado).order_by(ArmadoMaterial.id_material.asc()).all()
-    data = [{"id_material": m.id_material, "nombre": m.nombre, "cantidad": float(m.cantidad or 0), "caja": m.caja,
+    data = [{"id_material": m.id_material, "nombre": canonizar_nombre_material(m.nombre), "cantidad": float(m.cantidad or 0), "caja": m.caja,
              "caja_tecnico_id": m.caja_tecnico_id,
              "caja_tecnico_nombre": m.caja_tecnico.name if m.caja_tecnico else None,
              "estado_registro": m.estado_registro or "normal",
@@ -744,11 +786,11 @@ def guardar_materiales(id_armado):
 
     Armado.query.get_or_404(id_armado)
     existentes = ArmadoMaterial.query.filter_by(armado_id=id_armado).all()
-    por_nombre = {normalizar_texto(m.nombre): m for m in existentes if normalizar_texto(m.nombre)}
+    por_nombre = {normalizar_nombre_material(m.nombre): m for m in existentes if normalizar_nombre_material(m.nombre)}
     cambios = 0
 
     for item in payload:
-        nombre = (item.get("nombre") or "").strip()
+        nombre = canonizar_nombre_material(item.get("nombre"))
         if not nombre:
             continue
 
@@ -760,7 +802,7 @@ def guardar_materiales(id_armado):
         estado_registro = normalizar_estado_registro_material(item.get("estado_registro"))
         observacion_registro = item.get("observacion_registro")
         accion_material = normalizar_texto(item.get("accion_material") or item.get("accion") or "")
-        key = normalizar_texto(nombre)
+        key = normalizar_nombre_material(nombre)
         actual = None
 
         # Prioridad: actualizar por ID cuando venga en payload (evita cruces por nombre/acentos).
@@ -777,6 +819,8 @@ def guardar_materiales(id_armado):
         if actual:
             cant_actual = float(actual.cantidad or 0)
             caja_actual = actual.caja or 'Caja 1'
+            if actual.nombre != nombre:
+                actual.nombre = nombre
             if accion_material == "incremento":
                 if cantidad_delta == 0:
                     continue
