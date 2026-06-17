@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify
+﻿from flask import Blueprint, request, jsonify, current_app
 from ..models import Armado, ArmadoParticipacion, ArmadoMaterial, ArmadoGuiaSalida, Centro, Cliente, User, EquiposIP, RetiroTerreno, RetiroTerrenoEquipo
 from ..models import ArmadoCajaMovimiento
 from ..database import db
@@ -130,6 +130,13 @@ def canonizar_nombre_material(nombre):
     return "Mesa respaldo" if normalizar_nombre_material(texto) == "mesa respaldo" else texto
 
 
+def normalizar_modalidad_salida(valor):
+    texto = normalizar_texto(valor).replace(" ", "_")
+    if "mano" in texto:
+        return "por_mano"
+    return "transportista_externo"
+
+
 def parse_date(value):
     if not value:
         return None
@@ -173,13 +180,43 @@ def nombre_caja_seguro(value):
     return nombre or "Pendiente de caja"
 
 
+def clave_caja(value):
+    nombre = nombre_caja_seguro(value)
+    normalizado = normalizar_texto(nombre)
+    match = re.match(r"^caja\s*(\d+)", normalizado)
+    if match:
+        return f"caja_{int(match.group(1))}"
+    return normalizado
+
+
+def normalizar_lista_cajas(valores):
+    resultado = []
+    vistos = {}
+    for value in (valores or []):
+        nombre = nombre_caja_seguro(value)
+        clave = clave_caja(nombre)
+        if not clave:
+            continue
+        anterior = vistos.get(clave)
+        if anterior is None:
+            vistos[clave] = nombre
+            resultado.append(nombre)
+            continue
+        preferido = nombre if len(nombre) > len(anterior) else anterior
+        if preferido != anterior:
+            idx = resultado.index(anterior)
+            resultado[idx] = preferido
+            vistos[clave] = preferido
+    return resultado
+
+
 def es_caja_real(value):
-    return normalizar_texto(nombre_caja_seguro(value)) != normalizar_texto("Pendiente de caja")
+    return clave_caja(value) != clave_caja("Pendiente de caja")
 
 
 def contar_cajas_reales(valores):
-    unicas = {nombre_caja_seguro(value) for value in (valores or []) if nombre_caja_seguro(value)}
-    return len([nombre for nombre in unicas if es_caja_real(nombre)])
+    unicas = {clave_caja(value) for value in (valores or []) if clave_caja(value)}
+    return len([clave for clave in unicas if clave != clave_caja("Pendiente de caja")])
 
 
 def normalizar_estado_registro_equipo(value):
@@ -278,7 +315,7 @@ def serializar_guia_salida(guia):
         cajas = []
     if not isinstance(cajas, list):
         cajas = []
-    cajas = [nombre_caja_seguro(c) for c in cajas if nombre_caja_seguro(c)]
+    cajas = normalizar_lista_cajas(cajas)
     return {
         "id_guia_salida": guia.id_guia_salida,
         "armado_id": guia.armado_id,
@@ -394,7 +431,7 @@ def listar_armados():
             total_cajas_calc = contar_cajas_reales([*cajas_equipos, *cajas_materiales]) or 0
         total_cajas = total_cajas_calc if total_cajas_calc > 0 else int(armado.total_cajas_manual or 0)
 
-        # fecha_inicio real: si hay fecha_inicio ya fijada úsala, si no, la primera fecha de movimiento o la de asignación
+        # fecha_inicio real: si hay fecha_inicio ya fijada Ãºsala, si no, la primera fecha de movimiento o la de asignaciÃ³n
         primera_mov = (
             ArmadoCajaMovimiento.query.filter_by(armado_id=armado.id_armado)
             .order_by(ArmadoCajaMovimiento.fecha.asc())
@@ -512,53 +549,58 @@ def listar_guias_salida_armado():
 
 @armados_blueprint.route('/guias-salida', methods=['POST'])
 def crear_guia_salida_armado():
-    data = request.json or {}
-    armado_id = data.get('armado_id')
     try:
-        armado_id = int(armado_id or 0)
-    except Exception:
-        armado_id = 0
-    if not armado_id:
-        return jsonify({"message": "armado_id es requerido"}), 400
-    armado = Armado.query.get_or_404(armado_id)
-    cajas = data.get('cajas') if isinstance(data.get('cajas'), list) else []
-    cajas = [str(c).strip() for c in cajas if str(c).strip()]
-    if not cajas:
-        return jsonify({"message": "Debes seleccionar al menos una caja"}), 400
-
-    existentes = ArmadoGuiaSalida.query.filter_by(armado_id=armado_id).order_by(ArmadoGuiaSalida.id_guia_salida.asc()).all()
-    usadas = set()
-    for guia in existentes:
+        data = request.json or {}
+        armado_id = data.get('armado_id')
         try:
-            cajas_existentes = json.loads(guia.cajas_json) if guia.cajas_json else []
+            armado_id = int(armado_id or 0)
         except Exception:
-            cajas_existentes = []
-        usadas.update(str(c).strip() for c in cajas_existentes if str(c).strip())
-    repetidas = sorted(set(cajas).intersection(usadas))
-    if repetidas:
-        return jsonify({"message": f"Las cajas ya fueron despachadas: {', '.join(repetidas)}"}), 409
+            armado_id = 0
+        if not armado_id:
+            return jsonify({"message": "armado_id es requerido"}), 400
+        armado = Armado.query.get_or_404(armado_id)
+        cajas = data.get('cajas') if isinstance(data.get('cajas'), list) else []
+        cajas = normalizar_lista_cajas(cajas)
+        if not cajas:
+            return jsonify({"message": "Debes seleccionar al menos una caja"}), 400
 
-    numero_guia = str(data.get('numero_guia') or '').strip() or f"GS-{str(armado_id).zfill(4)}-{len(existentes) + 1}"
-    fecha_salida = parse_date(data.get('fecha_salida')) or datetime.utcnow().date()
-    observacion = data.get('observacion')
-    estado = str(data.get('estado') or 'en_transito_centro').strip() or 'en_transito_centro'
-    tipo_despacho = str(data.get('tipo_despacho') or ('total' if len(cajas) == 1 else 'parcial')).strip().lower() or 'parcial'
-    modalidad_salida = str(data.get('modalidad_salida') or 'guia').strip().lower() or 'guia'
+        existentes = ArmadoGuiaSalida.query.filter_by(armado_id=armado_id).order_by(ArmadoGuiaSalida.id_guia_salida.asc()).all()
+        usadas = set()
+        for guia in existentes:
+            try:
+                cajas_existentes = json.loads(guia.cajas_json) if guia.cajas_json else []
+            except Exception:
+                cajas_existentes = []
+            usadas.update(clave_caja(c) for c in cajas_existentes if clave_caja(c))
+        repetidas = sorted({c for c in cajas if clave_caja(c) in usadas})
+        if repetidas:
+            return jsonify({"message": f"Las cajas ya fueron despachadas: {', '.join(repetidas)}"}), 409
 
-    guia = ArmadoGuiaSalida(
-        armado_id=armado_id,
-        numero_guia=numero_guia,
-        fecha_salida=fecha_salida,
-        observacion=observacion,
-        estado=estado,
-        tipo_despacho=tipo_despacho,
-        modalidad_salida=modalidad_salida,
-        cajas_json=json.dumps(cajas, ensure_ascii=False),
-    )
-    db.session.add(guia)
-    db.session.commit()
-    emitir_actualizacion_armado(armado.id_armado, "guia_salida")
-    return jsonify(serializar_guia_salida(guia)), 201
+        numero_guia = str(data.get('numero_guia') or '').strip() or f"GS-{str(armado_id).zfill(4)}-{len(existentes) + 1}"
+        fecha_salida = parse_date(data.get('fecha_salida')) or datetime.utcnow().date()
+        observacion = data.get('observacion')
+        estado = str(data.get('estado') or 'en_transito_centro').strip() or 'en_transito_centro'
+        tipo_despacho = str(data.get('tipo_despacho') or ('total' if len(cajas) == 1 else 'parcial')).strip().lower() or 'parcial'
+        modalidad_salida = normalizar_modalidad_salida(data.get('modalidad_salida') or 'transportista_externo')
+
+        guia = ArmadoGuiaSalida(
+            armado_id=armado_id,
+            numero_guia=numero_guia,
+            fecha_salida=fecha_salida,
+            observacion=observacion,
+            estado=estado,
+            tipo_despacho=tipo_despacho,
+            modalidad_salida=modalidad_salida,
+            cajas_json=json.dumps(cajas, ensure_ascii=False),
+        )
+        db.session.add(guia)
+        db.session.commit()
+        emitir_actualizacion_armado(armado.id_armado, "guia_salida")
+        return jsonify(serializar_guia_salida(guia)), 201
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.exception("Error al crear guia de salida")
+        return jsonify({"message": "Error al crear guia de salida", "detail": str(exc)}), 500
 
 
 @armados_blueprint.route('/<int:id_armado>/guia-salida', methods=['GET'])
@@ -579,9 +621,9 @@ def guardar_guia_salida_armado(id_armado):
     observacion = data.get('observacion')
     estado = str(data.get('estado') or 'en_transito_centro').strip() or 'en_transito_centro'
     tipo_despacho = str(data.get('tipo_despacho') or 'total').strip().lower() or 'total'
-    modalidad_salida = str(data.get('modalidad_salida') or 'guia').strip().lower() or 'guia'
+    modalidad_salida = normalizar_modalidad_salida(data.get('modalidad_salida') or 'transportista_externo')
     cajas = data.get('cajas') if isinstance(data.get('cajas'), list) else []
-    cajas = [str(c).strip() for c in cajas if str(c).strip()]
+    cajas = normalizar_lista_cajas(cajas)
 
     guia = ArmadoGuiaSalida.query.filter_by(armado_id=id_armado).order_by(ArmadoGuiaSalida.updated_at.desc(), ArmadoGuiaSalida.id_guia_salida.desc()).first()
     if not guia:
@@ -613,46 +655,51 @@ def guardar_guia_salida_armado(id_armado):
 
 @armados_blueprint.route('/guias-salida/<int:id_guia_salida>', methods=['PUT'])
 def actualizar_guia_salida(id_guia_salida):
-    guia = ArmadoGuiaSalida.query.get_or_404(id_guia_salida)
-    data = request.json or {}
-    numero_guia = str(data.get('numero_guia') or '').strip() or guia.numero_guia
-    fecha_salida = parse_date(data.get('fecha_salida')) or guia.fecha_salida or datetime.utcnow().date()
-    observacion = data.get('observacion')
-    estado = str(data.get('estado') or guia.estado or 'en_transito_centro').strip() or 'en_transito_centro'
-    tipo_despacho = str(data.get('tipo_despacho') or guia.tipo_despacho or 'total').strip().lower() or 'total'
-    modalidad_salida = str(data.get('modalidad_salida') or guia.modalidad_salida or 'guia').strip().lower() or 'guia'
-    cajas = data.get('cajas') if isinstance(data.get('cajas'), list) else None
+    try:
+        guia = ArmadoGuiaSalida.query.get_or_404(id_guia_salida)
+        data = request.json or {}
+        numero_guia = str(data.get('numero_guia') or '').strip() or guia.numero_guia
+        fecha_salida = parse_date(data.get('fecha_salida')) or guia.fecha_salida or datetime.utcnow().date()
+        observacion = data.get('observacion')
+        estado = str(data.get('estado') or guia.estado or 'en_transito_centro').strip() or 'en_transito_centro'
+        tipo_despacho = str(data.get('tipo_despacho') or guia.tipo_despacho or 'total').strip().lower() or 'total'
+        modalidad_salida = normalizar_modalidad_salida(data.get('modalidad_salida') or guia.modalidad_salida or 'transportista_externo')
+        cajas = data.get('cajas') if isinstance(data.get('cajas'), list) else None
 
-    if cajas is not None:
-        cajas = [str(c).strip() for c in cajas if str(c).strip()]
-        if not cajas:
-            return jsonify({"message": "Debes seleccionar al menos una caja"}), 400
-        otras = ArmadoGuiaSalida.query.filter(
-            ArmadoGuiaSalida.armado_id == guia.armado_id,
-            ArmadoGuiaSalida.id_guia_salida != guia.id_guia_salida
-        ).all()
-        usadas = set()
-        for item in otras:
-            try:
-                cajas_otras = json.loads(item.cajas_json) if item.cajas_json else []
-            except Exception:
-                cajas_otras = []
-            usadas.update(str(c).strip() for c in cajas_otras if str(c).strip())
-        repetidas = sorted(set(cajas).intersection(usadas))
-        if repetidas:
-            return jsonify({"message": f"Las cajas ya fueron despachadas: {', '.join(repetidas)}"}), 409
-        guia.cajas_json = json.dumps(cajas, ensure_ascii=False)
+        if cajas is not None:
+            cajas = normalizar_lista_cajas(cajas)
+            if not cajas:
+                return jsonify({"message": "Debes seleccionar al menos una caja"}), 400
+            otras = ArmadoGuiaSalida.query.filter(
+                ArmadoGuiaSalida.armado_id == guia.armado_id,
+                ArmadoGuiaSalida.id_guia_salida != guia.id_guia_salida
+            ).all()
+            usadas = set()
+            for item in otras:
+                try:
+                    cajas_otras = json.loads(item.cajas_json) if item.cajas_json else []
+                except Exception:
+                    cajas_otras = []
+                usadas.update(clave_caja(c) for c in cajas_otras if clave_caja(c))
+            repetidas = sorted({c for c in cajas if clave_caja(c) in usadas})
+            if repetidas:
+                return jsonify({"message": f"Las cajas ya fueron despachadas: {', '.join(repetidas)}"}), 409
+            guia.cajas_json = json.dumps(cajas, ensure_ascii=False)
 
-    guia.numero_guia = numero_guia
-    guia.fecha_salida = fecha_salida
-    guia.observacion = observacion
-    guia.estado = estado
-    guia.tipo_despacho = tipo_despacho
-    guia.modalidad_salida = modalidad_salida
-    guia.updated_at = datetime.utcnow()
-    db.session.commit()
-    emitir_actualizacion_armado(guia.armado_id, "guia_salida")
-    return jsonify(serializar_guia_salida(guia)), 200
+        guia.numero_guia = numero_guia
+        guia.fecha_salida = fecha_salida
+        guia.observacion = observacion
+        guia.estado = estado
+        guia.tipo_despacho = tipo_despacho
+        guia.modalidad_salida = modalidad_salida
+        guia.updated_at = datetime.utcnow()
+        db.session.commit()
+        emitir_actualizacion_armado(guia.armado_id, "guia_salida")
+        return jsonify(serializar_guia_salida(guia)), 200
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.exception("Error al actualizar guia de salida")
+        return jsonify({"message": "Error al actualizar guia de salida", "detail": str(exc)}), 500
 
 
 @armados_blueprint.route('/<int:id_armado>/guia-salida/recepcion-centro', methods=['POST'])
@@ -727,7 +774,7 @@ def actualizar_armado(id_armado):
     armado.tecnico_id = data.get('tecnico_id', armado.tecnico_id)
     armado.estado = data.get('estado', armado.estado)
 
-    # Solo actualizar fechas cuando el campo viene explícitamente en payload.
+    # Solo actualizar fechas cuando el campo viene explÃ­citamente en payload.
     # Evita borrar/modificar fechas por requests parciales (ej: solo estado).
     if 'fecha_asignacion' in data:
         parsed = parse_date(data.get('fecha_asignacion'))
@@ -933,7 +980,7 @@ def listar_movimientos(id_armado):
 
 @armados_blueprint.route('/movimientos', methods=['GET'])
 def listar_movimientos_recientes():
-    """Historial global de movimientos (equipos y materiales) más recientes."""
+    """Historial global de movimientos (equipos y materiales) mÃ¡s recientes."""
     try:
         limite = int(request.args.get('limit', 20))
     except ValueError:
@@ -1360,7 +1407,7 @@ def actualizar_participacion(id_participacion):
     participacion.fecha_fin = parse_date(data.get('fecha_fin'))
     participacion.nota = data.get('nota', participacion.nota)
     db.session.commit()
-    return jsonify({"message": "Participación actualizada"}), 200
+    return jsonify({"message": "ParticipaciÃ³n actualizada"}), 200
 
 
 @armados_blueprint.route('/participaciones/<int:id_participacion>', methods=['DELETE'])
@@ -1369,8 +1416,8 @@ def eliminar_participacion(id_participacion):
     armado = participacion.armado
     force = str(request.args.get("force", "")).lower() in ("1", "true", "si", "yes")
 
-    # Regla de seguridad: solo permitir borrar participación si ese técnico
-    # no registró movimientos en la planilla.
+    # Regla de seguridad: solo permitir borrar participaciÃ³n si ese tÃ©cnico
+    # no registrÃ³ movimientos en la planilla.
     if not force:
         tiene_movimientos = (
             ArmadoCajaMovimiento.query.filter(
@@ -1381,12 +1428,12 @@ def eliminar_participacion(id_participacion):
         )
         if tiene_movimientos:
             return jsonify({
-                "message": "No se puede eliminar: este técnico ya registró cambios en la planilla."
+                "message": "No se puede eliminar: este tÃ©cnico ya registrÃ³ cambios en la planilla."
             }), 409
 
     db.session.delete(participacion)
 
-    # Si era la última participación, eliminar el armado completo.
+    # Si era la Ãºltima participaciÃ³n, eliminar el armado completo.
     restantes = (
         ArmadoParticipacion.query.filter(
             ArmadoParticipacion.armado_id == participacion.armado_id,
@@ -1397,10 +1444,10 @@ def eliminar_participacion(id_participacion):
         db.session.delete(armado)
         db.session.commit()
         emitir_actualizacion_armado(participacion.armado_id, "armado")
-        return jsonify({"message": "Participación y armado eliminados"}), 200
+        return jsonify({"message": "ParticipaciÃ³n y armado eliminados"}), 200
 
-    # Si el técnico activo coincide y hay otro historial, usar el más reciente.
-    # Si no hay otro historial, conservar el técnico actual para no violar NOT NULL.
+    # Si el tÃ©cnico activo coincide y hay otro historial, usar el mÃ¡s reciente.
+    # Si no hay otro historial, conservar el tÃ©cnico actual para no violar NOT NULL.
     if armado and armado.tecnico_id == participacion.tecnico_id:
         ultimo = (
             ArmadoParticipacion.query.filter(
@@ -1415,4 +1462,6 @@ def eliminar_participacion(id_participacion):
 
     db.session.commit()
     emitir_actualizacion_armado(participacion.armado_id, "armado")
-    return jsonify({"message": "Participación eliminada"}), 200
+    return jsonify({"message": "ParticipaciÃ³n eliminada"}), 200
+
+

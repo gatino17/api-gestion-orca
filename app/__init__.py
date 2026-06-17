@@ -599,9 +599,41 @@ def create_app():
         db.session.execute(text("ALTER TABLE bodega_inventario_equipos ADD COLUMN IF NOT EXISTS fecha_devolucion TIMESTAMP"))
         db.session.execute(text("ALTER TABLE bodega_inventario_equipos ADD COLUMN IF NOT EXISTS observacion_asignacion TEXT"))
         db.session.execute(text("ALTER TABLE bodega_inventario_equipos ADD COLUMN IF NOT EXISTS observacion_devolucion TEXT"))
+        db.session.execute(text("ALTER TABLE armados_guias_salida ADD COLUMN IF NOT EXISTS fecha_recepcion_centro TIMESTAMP"))
         db.session.execute(text("ALTER TABLE armados_guias_salida ADD COLUMN IF NOT EXISTS tipo_despacho VARCHAR(20) DEFAULT 'total'"))
         db.session.execute(text("ALTER TABLE armados_guias_salida ADD COLUMN IF NOT EXISTS modalidad_salida VARCHAR(30) DEFAULT 'guia'"))
         db.session.execute(text("ALTER TABLE armados_guias_salida ADD COLUMN IF NOT EXISTS cajas_json TEXT"))
+        db.session.execute(text("ALTER TABLE armados_guias_salida ADD COLUMN IF NOT EXISTS estado VARCHAR(40) DEFAULT 'en_transito_centro'"))
+        db.session.execute(text("ALTER TABLE armados_guias_salida ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"))
+        db.session.execute(text("ALTER TABLE armados_guias_salida ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"))
+        db.session.execute(
+            text(
+                """
+                DO $$
+                BEGIN
+                    IF EXISTS (
+                        SELECT 1
+                        FROM pg_indexes
+                        WHERE schemaname = current_schema()
+                          AND tablename = 'armados_guias_salida'
+                          AND indexname = 'ix_armados_guias_salida_armado_id'
+                          AND indexdef ILIKE '%%UNIQUE INDEX%%'
+                    ) THEN
+                        EXECUTE 'DROP INDEX IF EXISTS ix_armados_guias_salida_armado_id';
+                    END IF;
+                END
+                $$;
+                """
+            )
+        )
+        db.session.execute(
+            text(
+                """
+                CREATE INDEX IF NOT EXISTS ix_armados_guias_salida_armado_id
+                ON armados_guias_salida (armado_id)
+                """
+            )
+        )
         db.session.execute(text("ALTER TABLE armado_caja_movimientos ADD COLUMN IF NOT EXISTS accion VARCHAR(20)"))
         db.session.execute(text("ALTER TABLE armado_caja_movimientos ADD COLUMN IF NOT EXISTS cantidad_anterior NUMERIC(10, 2)"))
         db.session.execute(text("ALTER TABLE armado_caja_movimientos ADD COLUMN IF NOT EXISTS cantidad_nueva NUMERIC(10, 2)"))
