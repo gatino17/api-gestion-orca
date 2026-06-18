@@ -19,3 +19,11 @@ def emit_armado_event(event_name, payload):
     except Exception:
         # No interrumpir requests REST por errores de realtime.
         pass
+
+
+def emit_actividad_event(event_name, payload):
+    """Emite eventos de actividades sin romper flujo HTTP si Socket.IO falla."""
+    try:
+        socketio.emit(event_name, payload or {})
+    except Exception:
+        pass

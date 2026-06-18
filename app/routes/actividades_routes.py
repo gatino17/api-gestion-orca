@@ -4,6 +4,7 @@ import jwt
 import unicodedata
 from ..models import Actividad, Centro, Encargado, User
 from ..database import db
+from ..socketio_ext import emit_actividad_event
 
 actividades_blueprint = Blueprint('actividades', __name__)
 JWT_KEYS = ["remoto753524"]
@@ -232,6 +233,14 @@ def crear_actividad():
 
     db.session.add(nueva_actividad)
     db.session.commit()
+    emit_actividad_event("actividad_updated", {
+        "action": "created",
+        "id_actividad": nueva_actividad.id_actividad,
+        "estado": nueva_actividad.estado,
+        "tecnico_encargado": nueva_actividad.tecnico_encargado,
+        "tecnico_ayudante": nueva_actividad.tecnico_ayudante,
+        "centro_id": nueva_actividad.centro_id,
+    })
     return jsonify({"message": "Actividad creada exitosamente", "id_actividad": nueva_actividad.id_actividad}), 201
 
 # Listar todas las actividades
@@ -326,12 +335,29 @@ def actualizar_actividad(id_actividad):
     )
 
     db.session.commit()
+    emit_actividad_event("actividad_updated", {
+        "action": "updated",
+        "id_actividad": actividad.id_actividad,
+        "estado": actividad.estado,
+        "tecnico_encargado": actividad.tecnico_encargado,
+        "tecnico_ayudante": actividad.tecnico_ayudante,
+        "centro_id": actividad.centro_id,
+    })
     return jsonify({"message": "Actividad actualizada exitosamente"}), 200
 
 # Eliminar actividad
 @actividades_blueprint.route('/<int:id_actividad>', methods=['DELETE'])
 def eliminar_actividad(id_actividad):
     actividad = Actividad.query.get_or_404(id_actividad)
+    payload = {
+        "action": "deleted",
+        "id_actividad": actividad.id_actividad,
+        "estado": actividad.estado,
+        "tecnico_encargado": actividad.tecnico_encargado,
+        "tecnico_ayudante": actividad.tecnico_ayudante,
+        "centro_id": actividad.centro_id,
+    }
     db.session.delete(actividad)
     db.session.commit()
+    emit_actividad_event("actividad_updated", payload)
     return jsonify({"message": "Actividad eliminada exitosamente"}), 200
