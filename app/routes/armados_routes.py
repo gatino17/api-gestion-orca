@@ -4,11 +4,12 @@ from ..models import ArmadoCajaMovimiento
 from ..database import db
 from ..socketio_ext import emit_armado_event
 from datetime import datetime
+from collections import defaultdict
 import unicodedata
 import jwt
 import re
 import json
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, or_, func
 from sqlalchemy.orm import joinedload
 
 armados_blueprint = Blueprint('armados', __name__)
@@ -241,11 +242,8 @@ def equipo_migrado_a_material(nombre):
     return normalizar_nombre_equipo(nombre) in EQUIPOS_MIGRADOS_A_MATERIALES
 
 
-def calcular_resumen_armado_equipos(centro_id):
-    equipos = [
-        e for e in EquiposIP.query.filter_by(centro_id=centro_id).all()
-        if not equipo_migrado_a_material(e.nombre)
-    ]
+def construir_resumen_armado_equipos_desde_lista(equipos):
+    equipos = [e for e in (equipos or []) if not equipo_migrado_a_material(e.nombre)]
     mapa = {normalizar_nombre_equipo(e.nombre): e for e in equipos}
     predef_norm = {normalizar_nombre_equipo(nombre) for nombre in EQUIPOS_PREDEF}
 
@@ -272,9 +270,14 @@ def calcular_resumen_armado_equipos(centro_id):
     }
 
 
-def calcular_detalle_pendientes_armado(centro_id):
+def calcular_resumen_armado_equipos(centro_id):
+    equipos = EquiposIP.query.filter_by(centro_id=centro_id).all()
+    return construir_resumen_armado_equipos_desde_lista(equipos)
+
+
+def construir_detalle_pendientes_armado_desde_lista(equipos):
     equipos = [
-        e for e in EquiposIP.query.filter_by(centro_id=centro_id).all()
+        e for e in (equipos or [])
         if not equipo_migrado_a_material(e.nombre)
         and normalizar_estado_registro_equipo(e.estado_registro) == "pendiente"
     ]
@@ -297,6 +300,11 @@ def calcular_detalle_pendientes_armado(centro_id):
         "items": items,
         "resumen": resumen,
     }
+
+
+def calcular_detalle_pendientes_armado(centro_id):
+    equipos = EquiposIP.query.filter_by(centro_id=centro_id).all()
+    return construir_detalle_pendientes_armado_desde_lista(equipos)
 
 
 def emitir_actualizacion_armado(armado_id, tipo="armado"):
@@ -390,7 +398,10 @@ def listar_armados():
     tecnico_id = request.args.get('tecnico_id', type=int)
     centro_id = request.args.get('centro_id', type=int)
 
-    query = Armado.query
+    query = Armado.query.options(
+        joinedload(Armado.centro).joinedload(Centro.cliente),
+        joinedload(Armado.tecnico),
+    )
     if estado:
         query = query.filter(Armado.estado == estado)
     if tecnico_id:
@@ -412,32 +423,111 @@ def listar_armados():
         query = query.filter(Armado.centro_id == centro_id)
 
     armados = query.order_by(Armado.fecha_asignacion.desc()).distinct().all()
+    if not armados:
+        return jsonify([]), 200
+
+    armado_ids = [int(a.id_armado) for a in armados]
+    centro_ids = sorted({int(a.centro_id) for a in armados if a.centro_id})
+
+    participaciones = (
+        ArmadoParticipacion.query.options(joinedload(ArmadoParticipacion.tecnico))
+        .filter(ArmadoParticipacion.armado_id.in_(armado_ids))
+        .order_by(
+            ArmadoParticipacion.armado_id.asc(),
+            ArmadoParticipacion.fecha_inicio.asc(),
+            ArmadoParticipacion.id_participacion.asc(),
+        )
+        .all()
+    )
+    participaciones_por_armado = defaultdict(list)
+    tecnicos_activos_por_armado = defaultdict(list)
+    for part in participaciones:
+        arm_id = int(part.armado_id or 0)
+        if not arm_id:
+            continue
+        participaciones_por_armado[arm_id].append(part)
+        if part.fecha_fin is None:
+            tecnicos_activos_por_armado[arm_id].append(part)
+
+    equipos = EquiposIP.query.filter(EquiposIP.centro_id.in_(centro_ids)).all() if centro_ids else []
+    equipos_por_centro = defaultdict(list)
+    for equipo in equipos:
+        centro_key = int(equipo.centro_id or 0)
+        if centro_key:
+            equipos_por_centro[centro_key].append(equipo)
+
+    materiales = (
+        ArmadoMaterial.query.filter(ArmadoMaterial.armado_id.in_(armado_ids)).all()
+        if armado_ids else []
+    )
+    materiales_por_armado = defaultdict(list)
+    for material in materiales:
+        armado_key = int(material.armado_id or 0)
+        if armado_key:
+            materiales_por_armado[armado_key].append(material)
+
+    primeras_fechas_mov = dict(
+        db.session.query(
+            ArmadoCajaMovimiento.armado_id,
+            func.min(ArmadoCajaMovimiento.fecha),
+        )
+        .filter(ArmadoCajaMovimiento.armado_id.in_(armado_ids))
+        .group_by(ArmadoCajaMovimiento.armado_id)
+        .all()
+    )
+
     resultado = []
     for armado in armados:
-        participaciones = ArmadoParticipacion.query.filter_by(armado_id=armado.id_armado).order_by(
-            ArmadoParticipacion.fecha_inicio.asc(), ArmadoParticipacion.id_participacion.asc()
-        ).all()
-        historial_tecnicos = [p.tecnico.name if p.tecnico else f"ID {p.tecnico_id}" for p in participaciones]
-        tecnicos_activos = _serializar_tecnicos_activos(armado)
-        resumen_armado = calcular_resumen_armado_equipos(armado.centro_id)
-        detalle_pendientes = calcular_detalle_pendientes_armado(armado.centro_id)
-        # calcular total de cajas (equipos del centro + materiales del armado)
-        cajas_equipos = [e.caja for e in EquiposIP.query.filter_by(centro_id=armado.centro_id).all()]
-        cajas_materiales = [m.caja for m in ArmadoMaterial.query.filter_by(armado_id=armado.id_armado).all()]
-        cajas_estado = list(parse_cajas_estado(armado.cajas_estado_json).keys())
+        armado_id = int(armado.id_armado or 0)
+        centro_id_actual = int(armado.centro_id or 0)
+        participaciones_armado = participaciones_por_armado.get(armado_id, [])
+        historial_tecnicos = [
+            p.tecnico.name if p.tecnico else f"ID {p.tecnico_id}"
+            for p in participaciones_armado
+        ]
+
+        vistos = set()
+        tecnicos_activos = []
+        for part in tecnicos_activos_por_armado.get(armado_id, []):
+            tecnico = part.tecnico
+            tecnico_id_actual = int(part.tecnico_id or 0)
+            if tecnico_id_actual <= 0 or tecnico_id_actual in vistos:
+                continue
+            vistos.add(tecnico_id_actual)
+            tecnicos_activos.append({
+                "id": tecnico.id if tecnico else tecnico_id_actual,
+                "nombre": tecnico.name if tecnico else f"ID {tecnico_id_actual}",
+                "rol": tecnico.rol if tecnico else None,
+                "principal": tecnico_id_actual == int(armado.tecnico_id or 0),
+            })
+        if not tecnicos_activos and armado.tecnico_id:
+            tecnicos_activos.append({
+                "id": armado.tecnico.id if armado.tecnico else armado.tecnico_id,
+                "nombre": armado.tecnico.name if armado.tecnico else f"ID {armado.tecnico_id}",
+                "rol": armado.tecnico.rol if armado.tecnico else None,
+                "principal": True,
+            })
+
+        equipos_centro = equipos_por_centro.get(centro_id_actual, [])
+        resumen_armado = construir_resumen_armado_equipos_desde_lista(equipos_centro)
+        detalle_pendientes = construir_detalle_pendientes_armado_desde_lista(equipos_centro)
+
+        cajas_equipos = [e.caja for e in equipos_centro]
+        cajas_materiales = [m.caja for m in materiales_por_armado.get(armado_id, [])]
+        cajas_estado_map = parse_cajas_estado(armado.cajas_estado_json)
+        cajas_estado = list(cajas_estado_map.keys())
         if cajas_estado:
             total_cajas_calc = contar_cajas_reales(cajas_estado) or 0
         else:
             total_cajas_calc = contar_cajas_reales([*cajas_equipos, *cajas_materiales]) or 0
         total_cajas = total_cajas_calc if total_cajas_calc > 0 else int(armado.total_cajas_manual or 0)
 
-        # fecha_inicio real: si hay fecha_inicio ya fijada Ãºsala, si no, la primera fecha de movimiento o la de asignaciÃ³n
-        primera_mov = (
-            ArmadoCajaMovimiento.query.filter_by(armado_id=armado.id_armado)
-            .order_by(ArmadoCajaMovimiento.fecha.asc())
-            .first()
+        primera_mov_fecha = primeras_fechas_mov.get(armado_id)
+        fecha_inicio_real = (
+            armado.fecha_inicio
+            or (primera_mov_fecha.date() if primera_mov_fecha else None)
+            or armado.fecha_asignacion
         )
-        fecha_inicio_real = armado.fecha_inicio or (primera_mov.fecha.date() if primera_mov else None) or armado.fecha_asignacion
 
         resultado.append({
             "id_armado": armado.id_armado,
@@ -468,10 +558,10 @@ def listar_armados():
             "porcentaje_armado": resumen_armado["porcentaje"],
             "armado_pendientes_resumen": detalle_pendientes["resumen"],
             "armado_pendientes_detalle": detalle_pendientes["items"],
-            "cajas_estado": parse_cajas_estado(armado.cajas_estado_json),
-            "tecnicos_historial": historial_tecnicos,
-            "tecnicos_asignados": tecnicos_activos
-        })
+                "cajas_estado": cajas_estado_map,
+                "tecnicos_historial": historial_tecnicos,
+                "tecnicos_asignados": tecnicos_activos
+            })
     return jsonify(resultado), 200
 
 
