@@ -3,6 +3,7 @@ from werkzeug.security import check_password_hash
 import jwt
 import datetime
 import json
+import os
 from sqlalchemy import func
 
 from ..models import User
@@ -11,6 +12,7 @@ from ..permissions import get_pages_for_role_name
 
 auth_blueprint = Blueprint('auth', __name__)
 SECRET_KEY = "remoto753524"
+TOKEN_EXP_HOURS = int(os.getenv("AUTH_TOKEN_EXP_HOURS", "720"))
 
 
 def _parse_supervisor_areas(user):
@@ -51,7 +53,7 @@ def login():
             'rol': user.rol,
             'paginas': get_pages_for_role_name(user.rol),
             'supervisor_areas': _parse_supervisor_areas(user),
-            'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=1),
+            'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=TOKEN_EXP_HOURS),
         },
         SECRET_KEY,
         algorithm='HS256',
