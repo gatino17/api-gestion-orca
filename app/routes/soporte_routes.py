@@ -62,6 +62,7 @@ def crear_soporte():
         fecha_soporte=_parse_date(data.get('fecha_soporte')),
         solucion=data.get('solucion'),
         categoria_falla=data.get('categoria_falla'),
+        subcategoria_falla=data.get('subcategoria_falla'),
         cambio_equipo=data.get('cambio_equipo', False),
         equipo_cambiado=data.get('equipo_cambiado'),
         origen=origen,
@@ -95,6 +96,7 @@ def obtener_soportes():
             "fecha_soporte": soporte.fecha_soporte.isoformat() if soporte.fecha_soporte else None,
             "solucion": soporte.solucion,
             "categoria_falla": soporte.categoria_falla,
+            "subcategoria_falla": soporte.subcategoria_falla,
             "cambio_equipo": soporte.cambio_equipo,
             "equipo_cambiado": soporte.equipo_cambiado,
             "origen": soporte.origen or "cliente",
@@ -177,6 +179,7 @@ def actualizar_soporte(id_soporte):
         soporte.fecha_soporte = _parse_date(data.get('fecha_soporte'))
     soporte.solucion = data.get('solucion', soporte.solucion)
     soporte.categoria_falla = data.get('categoria_falla', soporte.categoria_falla)
+    soporte.subcategoria_falla = data.get('subcategoria_falla', soporte.subcategoria_falla)
     soporte.cambio_equipo = data.get('cambio_equipo', soporte.cambio_equipo)
     soporte.equipo_cambiado = data.get('equipo_cambiado', soporte.equipo_cambiado)
     if 'origen' in data:

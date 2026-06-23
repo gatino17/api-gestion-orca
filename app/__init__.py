@@ -345,6 +345,14 @@ def create_app():
         db.session.execute(
             text(
                 """
+                ALTER TABLE soporte
+                ADD COLUMN IF NOT EXISTS subcategoria_falla VARCHAR(80)
+                """
+            )
+        )
+        db.session.execute(
+            text(
+                """
                 ALTER TABLE users
                 ADD COLUMN IF NOT EXISTS supervisor_areas TEXT
                 """

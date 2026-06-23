@@ -419,6 +419,7 @@ class Soporte(db.Model):
     fecha_soporte = db.Column(db.Date, nullable=False)
     solucion = db.Column(db.Text, nullable=True)
     categoria_falla = db.Column(db.String(50), nullable=True)
+    subcategoria_falla = db.Column(db.String(80), nullable=True)
     cambio_equipo = db.Column(db.Boolean, default=False)
     equipo_cambiado = db.Column(db.String(100), nullable=True)
     origen = db.Column(db.String(20), nullable=False, default='cliente')  # 'cliente' | 'orca'
@@ -434,7 +435,7 @@ class Soporte(db.Model):
         return (
             f"<Soporte(id_soporte={self.id_soporte}, centro_id={self.centro_id}, problema='{self.problema}', "
             f"tipo='{self.tipo}', fecha_soporte={self.fecha_soporte}, solucion='{self.solucion}', "
-            f"categoria_falla='{self.categoria_falla}', cambio_equipo={self.cambio_equipo}, "
+            f"categoria_falla='{self.categoria_falla}', subcategoria_falla='{self.subcategoria_falla}', cambio_equipo={self.cambio_equipo}, "
             f"equipo_cambiado='{self.equipo_cambiado}', origen='{self.origen}', estado='{self.estado}', fecha_cierre={self.fecha_cierre})>"
         )
 
