@@ -1,5 +1,5 @@
 ﻿from flask import Blueprint, request, jsonify, current_app
-from ..models import Armado, ArmadoParticipacion, ArmadoMaterial, ArmadoGuiaSalida, Centro, Cliente, User, EquiposIP, RetiroTerreno, RetiroTerrenoEquipo
+from ..models import ActaEntrega, Armado, ArmadoParticipacion, ArmadoMaterial, ArmadoGuiaSalida, Centro, Cliente, User, EquiposIP, RetiroTerreno, RetiroTerrenoEquipo
 from ..models import ArmadoCajaMovimiento
 from ..database import db
 from ..socketio_ext import emit_armado_event
@@ -1159,6 +1159,40 @@ def listar_movimientos_recientes():
 def historial_equipos_armado(id_armado):
     armado = Armado.query.get_or_404(id_armado)
 
+    def _clave_equipo_referencia(item):
+        try:
+            equipo_id = int(item.get("equipo_id")) if item.get("equipo_id") not in (None, "", 0, "0") else None
+        except Exception:
+            equipo_id = None
+        if equipo_id:
+            return f"id:{equipo_id}"
+        nombre = normalizar_texto(item.get("nombre") or item.get("nombre_item") or "")
+        numero_serie = normalizar_texto(item.get("numero_serie") or item.get("serie_actual") or "")
+        codigo = normalizar_texto(item.get("codigo") or "")
+        return f"raw:{nombre}|{numero_serie}|{codigo}"
+
+    acta_referencia = (
+        ActaEntrega.query
+        .filter(
+            ActaEntrega.armado_id == id_armado,
+            ActaEntrega.armado_equipos_json.isnot(None),
+        )
+        .order_by(ActaEntrega.updated_at.desc(), ActaEntrega.id_acta_entrega.desc())
+        .first()
+    )
+    acta_equipos_referencia = []
+    if acta_referencia and acta_referencia.armado_equipos_json:
+        try:
+            parsed_acta = json.loads(acta_referencia.armado_equipos_json) if isinstance(acta_referencia.armado_equipos_json, str) else acta_referencia.armado_equipos_json
+            if isinstance(parsed_acta, list):
+                acta_equipos_referencia = [item for item in parsed_acta if isinstance(item, dict)]
+        except Exception:
+            acta_equipos_referencia = []
+    claves_referencia_acta = {
+        _clave_equipo_referencia(item)
+        for item in acta_equipos_referencia
+    } if acta_equipos_referencia else set()
+
     movimientos = (
         ArmadoCajaMovimiento.query
         .filter(
@@ -1217,6 +1251,8 @@ def historial_equipos_armado(id_armado):
         item = resumen_map.get(item_key)
         serie_mov = (m.numero_serie or "").strip()
         fecha_mov = m.fecha.isoformat() if m.fecha else None
+        accion_mov = normalizar_texto(m.accion or "")
+        es_devuelto_bodega = accion_mov == "devuelto_bodega"
         correlativo_match = re.search(r"reemplazo_mantencion_N(\d+)", str(m.nombre_item or ""), flags=re.IGNORECASE)
         correlativo_mov = correlativo_match.group(1) if correlativo_match else None
 
@@ -1244,11 +1280,36 @@ def historial_equipos_armado(id_armado):
                 "serie_retirada": (retiro_actual or {}).get("serie_retirada", "-"),
                 "serie_retirada_fecha": (retiro_actual or {}).get("serie_retirada_fecha"),
                 "correlativo_retiro": (retiro_actual or {}).get("correlativo_retiro"),
+                "devuelto_bodega": False,
+                "fecha_devuelto_bodega": None,
+                "serie_devuelta_bodega": "-",
+                "ultimo_evento": accion_mov or "movimiento",
                 "cambios": 0,
                 "ultima_actualizacion": m.fecha.isoformat() if m.fecha else None
             }
             resumen_map[item_key] = item
         else:
+            item["ultimo_evento"] = accion_mov or item.get("ultimo_evento") or "movimiento"
+            item["ultima_actualizacion"] = m.fecha.isoformat() if m.fecha else item["ultima_actualizacion"]
+
+        if es_devuelto_bodega:
+            serie_base_devuelta = serie_mov or item.get("serie_actual") or item.get("serie_inicial") or "-"
+            serie_actual_anterior = item.get("serie_actual") or "-"
+            if serie_actual_anterior not in ("", "-"):
+                item["serie_anterior_actual"] = serie_actual_anterior
+                item["serie_anterior_actual_fecha"] = item.get("serie_actual_fecha")
+            item["devuelto_bodega"] = True
+            item["fecha_devuelto_bodega"] = fecha_mov
+            item["serie_devuelta_bodega"] = serie_base_devuelta or "-"
+            item["serie_actual"] = "-"
+            item["serie_actual_fecha"] = fecha_mov
+            if serie_mov:
+                ultima_serie_por_item[item_key] = serie_mov
+        else:
+            if item.get("devuelto_bodega"):
+                item["devuelto_bodega"] = False
+                item["fecha_devuelto_bodega"] = None
+                item["serie_devuelta_bodega"] = "-"
             if serie_mov and serie_mov != item["serie_actual"]:
                 item["cambios"] += 1
                 item["serie_anterior_actual"] = item["serie_actual"] or "-"
@@ -1257,10 +1318,8 @@ def historial_equipos_armado(id_armado):
                 item["serie_actual_fecha"] = fecha_mov
                 if correlativo_mov:
                     item["correlativo_ultimo"] = correlativo_mov
-            item["ultima_actualizacion"] = m.fecha.isoformat() if m.fecha else item["ultima_actualizacion"]
-
-        if serie_mov:
-            ultima_serie_por_item[item_key] = serie_mov
+            if serie_mov:
+                ultima_serie_por_item[item_key] = serie_mov
 
         eventos.append({
             "id_movimiento": m.id_movimiento,
@@ -1272,6 +1331,8 @@ def historial_equipos_armado(id_armado):
             "fecha_serie_nueva": fecha_mov,
             "correlativo": correlativo_mov,
             "numero_serie": serie_mov or "-",
+            "accion": accion_mov or "-",
+            "devuelto_bodega": es_devuelto_bodega,
             "tecnico_id": m.tecnico_id,
             "tecnico_nombre": m.tecnico.name if m.tecnico else None,
             "fecha": m.fecha.isoformat() if m.fecha else None
@@ -1281,7 +1342,10 @@ def historial_equipos_armado(id_armado):
         item_key = int(item.get("item_id") or 0)
         eq_actual = equipos_actuales.get(item_key)
         serie_eq_actual = (eq_actual.numero_serie or "").strip() if eq_actual else ""
-        if serie_eq_actual:
+        if item.get("devuelto_bodega"):
+            item["serie_actual"] = "-"
+            item["serie_actual_fecha"] = item.get("fecha_devuelto_bodega") or item.get("serie_actual_fecha")
+        elif serie_eq_actual:
             if (item.get("serie_actual") or "-") in ("", "-"):
                 item["serie_actual"] = serie_eq_actual
             if (item.get("serie_inicial") or "-") in ("", "-"):
@@ -1319,13 +1383,62 @@ def historial_equipos_armado(id_armado):
             "serie_retirada": (retiro_actual or {}).get("serie_retirada", "-"),
             "serie_retirada_fecha": (retiro_actual or {}).get("serie_retirada_fecha"),
             "correlativo_retiro": (retiro_actual or {}).get("correlativo_retiro"),
+            "devuelto_bodega": False,
+            "fecha_devuelto_bodega": None,
+            "serie_devuelta_bodega": "-",
+            "ultimo_evento": "estado_actual",
             "cambios": 0,
             "ultima_actualizacion": None,
         }
 
+    resumen_lista = list(resumen_map.values())
+    if claves_referencia_acta:
+        resumen_lista = [
+            item for item in resumen_lista
+            if (
+                f"id:{int(item.get('item_id') or 0)}" in claves_referencia_acta
+                or _clave_equipo_referencia({
+                    "nombre_item": item.get("nombre_item"),
+                    "serie_actual": item.get("serie_actual"),
+                    "numero_serie": item.get("serie_actual"),
+                    "codigo": "",
+                }) in claves_referencia_acta
+                or _clave_equipo_referencia({
+                    "nombre_item": item.get("nombre_item"),
+                    "serie_actual": item.get("serie_inicial"),
+                    "numero_serie": item.get("serie_inicial"),
+                    "codigo": "",
+                }) in claves_referencia_acta
+            )
+        ]
+
     resumen = sorted(
-        resumen_map.values(),
+        resumen_lista,
         key=lambda x: (-int(x.get("cambios", 0)), str(x.get("nombre_item", "")))
+    )
+
+    total_equipos_referencia = len(acta_equipos_referencia) if acta_equipos_referencia else len(resumen)
+    equipos_instalados_referencia = (
+        len([
+            item
+            for item in acta_equipos_referencia
+            if normalizar_texto(item.get("estado_uso") or "instalado") == "instalado"
+        ])
+        if acta_equipos_referencia
+        else len([
+            item
+            for item in resumen
+            if str(item.get("serie_actual") or "").strip() not in ("", "-") and not item.get("devuelto_bodega")
+        ])
+    )
+    equipos_devueltos_referencia = (
+        len([
+            item
+            for item in acta_equipos_referencia
+            if normalizar_texto(item.get("estado_uso") or "") == "devuelto_bodega"
+        ])
+        if acta_equipos_referencia
+        else len([item for item in resumen if item.get("devuelto_bodega")])
     )
 
     return jsonify({
@@ -1337,7 +1450,10 @@ def historial_equipos_armado(id_armado):
                 armado.centro.cliente.nombre
                 if armado.centro and armado.centro.cliente
                 else None
-            )
+            ),
+            "total_equipos_referencia": total_equipos_referencia,
+            "equipos_instalados_referencia": equipos_instalados_referencia,
+            "equipos_devueltos_referencia": equipos_devueltos_referencia,
         },
         "resumen": resumen,
         "eventos": list(reversed(eventos))

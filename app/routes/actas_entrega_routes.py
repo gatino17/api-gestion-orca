@@ -4,7 +4,8 @@ import json
 import jwt
 
 from ..database import db
-from ..models import ActaEntrega, Armado, Centro, User
+from ..models import ActaEntrega, Armado, ArmadoCajaMovimiento, Centro, User
+from ..socketio_ext import emit_armado_event
 
 
 actas_entrega_blueprint = Blueprint('actas_entrega', __name__)
@@ -51,6 +52,15 @@ def _serialize_acta(acta):
                 firmas_adicionales = parsed
     except Exception:
         firmas_adicionales = []
+    armado_equipos = []
+    try:
+        raw_equipos = acta.armado_equipos_json
+        if raw_equipos:
+            parsed_equipos = json.loads(raw_equipos) if isinstance(raw_equipos, str) else raw_equipos
+            if isinstance(parsed_equipos, list):
+                armado_equipos = parsed_equipos
+    except Exception:
+        armado_equipos = []
     return {
         "id_acta_entrega": acta.id_acta_entrega,
         "centro_id": acta.centro_id,
@@ -68,6 +78,7 @@ def _serialize_acta(acta):
         "recepciona_nombre": acta.recepciona_nombre,
         "firma_recepciona": acta.firma_recepciona,
         "equipos_considerados": acta.equipos_considerados,
+        "armado_equipos": armado_equipos,
         "centro_origen_traslado": acta.centro_origen_traslado,
         "tipo_instalacion": acta.tipo_instalacion or "instalacion",
         "empresa": cliente_nombre,
@@ -100,6 +111,156 @@ def _normalize_firmas_adicionales(value):
             continue
         normalizadas.append({"nombre": nombre, "firma": firma or None})
     return json.dumps(normalizadas, ensure_ascii=False) if normalizadas else None
+
+
+def _normalize_armado_equipos(value):
+    if value in (None, "", []):
+        return None
+    payload = value
+    if isinstance(value, str):
+        try:
+            payload = json.loads(value)
+        except Exception:
+            return None
+    if not isinstance(payload, list):
+        return None
+
+    permitidos_estado = {"instalado", "devuelto_bodega"}
+    permitidos_logistica = {"sin_movimiento", "en_transito_bodega", "recepcionado_bodega", "revision_bodega", "baja_bodega"}
+    normalizados = []
+
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        try:
+            equipo_id = int(item.get("equipo_id")) if item.get("equipo_id") not in (None, "", 0, "0") else None
+        except Exception:
+            equipo_id = None
+
+        nombre = str(item.get("nombre") or "").strip()
+        numero_serie = str(item.get("numero_serie") or "").strip()
+        codigo = str(item.get("codigo") or "").strip()
+        caja = str(item.get("caja") or "").strip()
+        observacion = str(item.get("observacion") or "").strip() or None
+        recepcion_bodega_por = str(item.get("recepcion_bodega_por") or "").strip() or None
+        fecha_recepcion_bodega = str(item.get("fecha_recepcion_bodega") or "").strip() or None
+        estado_uso = str(item.get("estado_uso") or "instalado").strip().lower()
+        estado_logistico = str(item.get("estado_logistico") or "sin_movimiento").strip().lower()
+
+        if estado_uso not in permitidos_estado:
+            estado_uso = "instalado"
+        if estado_logistico not in permitidos_logistica:
+            estado_logistico = "sin_movimiento"
+        if estado_uso != "devuelto_bodega":
+            estado_logistico = "sin_movimiento"
+        if estado_logistico not in {"recepcionado_bodega", "revision_bodega", "baja_bodega"}:
+            recepcion_bodega_por = None
+            fecha_recepcion_bodega = None
+
+        normalizados.append({
+            "equipo_id": equipo_id,
+            "nombre": nombre or None,
+            "numero_serie": numero_serie or None,
+            "codigo": codigo or None,
+            "caja": caja or None,
+            "estado_uso": estado_uso,
+            "estado_logistico": estado_logistico,
+            "observacion": observacion,
+            "recepcion_bodega_por": recepcion_bodega_por,
+            "fecha_recepcion_bodega": fecha_recepcion_bodega,
+        })
+
+    return json.dumps(normalizados, ensure_ascii=False) if normalizados else None
+
+
+def _parse_armado_equipos_payload(value):
+    if not value:
+        return []
+    payload = value
+    if isinstance(value, str):
+        try:
+            payload = json.loads(value)
+        except Exception:
+            return []
+    if not isinstance(payload, list):
+        return []
+    return [item for item in payload if isinstance(item, dict)]
+
+
+def _armado_equipo_key(item):
+    try:
+        equipo_id = int(item.get("equipo_id")) if item.get("equipo_id") not in (None, "", 0, "0") else None
+    except Exception:
+        equipo_id = None
+    if equipo_id:
+        return f"id:{equipo_id}"
+    nombre = str(item.get("nombre") or "").strip().lower()
+    numero_serie = str(item.get("numero_serie") or "").strip().lower()
+    codigo = str(item.get("codigo") or "").strip().lower()
+    return f"raw:{nombre}|{numero_serie}|{codigo}"
+
+
+def _registrar_movimientos_devuelto_bodega(acta, armado_equipos_antes, armado_equipos_despues, tecnico_id_override=None):
+    if not acta or not acta.armado_id:
+        return 0
+
+    usuario = _usuario_actual_desde_token()
+    try:
+        tecnico_id = int(tecnico_id_override) if tecnico_id_override not in (None, "", 0, "0") else None
+    except Exception:
+        tecnico_id = None
+    if not tecnico_id:
+        tecnico_id = int(usuario.id) if usuario and getattr(usuario, "id", None) else None
+    prev_map = {_armado_equipo_key(item): item for item in _parse_armado_equipos_payload(armado_equipos_antes)}
+    nuevos = _parse_armado_equipos_payload(armado_equipos_despues)
+    creados = 0
+
+    for item in nuevos:
+        key = _armado_equipo_key(item)
+        previo = prev_map.get(key) or {}
+        estado_prev = str(previo.get("estado_uso") or "instalado").strip().lower()
+        estado_new = str(item.get("estado_uso") or "instalado").strip().lower()
+        if estado_new != "devuelto_bodega":
+            continue
+
+        try:
+            item_id = int(item.get("equipo_id")) if item.get("equipo_id") not in (None, "", 0, "0") else None
+        except Exception:
+            item_id = None
+        if not item_id:
+            continue
+        numero_serie = str(item.get("numero_serie") or "").strip() or None
+        ya_existe = (
+            ArmadoCajaMovimiento.query
+            .filter(
+                ArmadoCajaMovimiento.armado_id == acta.armado_id,
+                ArmadoCajaMovimiento.tipo == "equipo",
+                ArmadoCajaMovimiento.item_id == item_id,
+                ArmadoCajaMovimiento.accion == "devuelto_bodega",
+            )
+            .order_by(ArmadoCajaMovimiento.id_movimiento.desc())
+            .first()
+        )
+        if estado_prev == "devuelto_bodega" and ya_existe:
+            continue
+        if ya_existe and numero_serie and str(ya_existe.numero_serie or "").strip() == numero_serie:
+            continue
+
+        movimiento = ArmadoCajaMovimiento(
+            armado_id=acta.armado_id,
+            tipo="equipo",
+            item_id=item_id,
+            nombre_item=str(item.get("nombre") or "Equipo").strip() or "Equipo",
+            numero_serie=numero_serie,
+            caja="-",
+            cantidad=1,
+            accion="devuelto_bodega",
+            tecnico_id=tecnico_id,
+        )
+        db.session.add(movimiento)
+        creados += 1
+
+    return creados
 
 
 def _sync_codigo_ponton_si_tecnico(acta, codigo_ponton_nuevo):
@@ -197,12 +358,25 @@ def crear_acta_entrega():
             recepciona_nombre=data.get("recepciona_nombre"),
             firma_recepciona=data.get("firma_recepciona"),
             equipos_considerados=data.get("equipos_considerados"),
+            armado_equipos_json=_normalize_armado_equipos(data.get("armado_equipos")),
             centro_origen_traslado=data.get("centro_origen_traslado"),
             tipo_instalacion=tipo_instalacion,
+        )
+        movimientos_devueltos = _registrar_movimientos_devuelto_bodega(
+            acta,
+            [],
+            data.get("armado_equipos"),
+            data.get("movimiento_tecnico_id"),
         )
         _sync_codigo_ponton_si_tecnico(acta, data.get("codigo_ponton"))
         db.session.add(acta)
         db.session.commit()
+        if movimientos_devueltos and acta.armado_id:
+            emit_armado_event("armado_updated", {
+                "armado_id": acta.armado_id,
+                "tipo": "equipo_devuelto_bodega",
+                "ts": datetime.utcnow().isoformat()
+            })
         return jsonify({"message": "Acta de entrega creada", "acta": _serialize_acta(acta)}), 201
     except Exception as e:
         db.session.rollback()
@@ -216,6 +390,7 @@ def actualizar_acta_entrega(id_acta_entrega):
         acta = ActaEntrega.query.get(id_acta_entrega)
         if not acta:
             return jsonify({"error": "Acta de entrega no encontrada"}), 404
+        armado_equipos_antes = acta.armado_equipos_json
 
         if "centro_id" in data and data.get("centro_id"):
             centro = Centro.query.get(data.get("centro_id"))
@@ -258,11 +433,14 @@ def actualizar_acta_entrega(id_acta_entrega):
             "recepciona_nombre",
             "firma_recepciona",
             "equipos_considerados",
+            "armado_equipos",
             "centro_origen_traslado",
         ]:
             if campo in data:
                 if campo == "firmas_tecnicos_adicionales":
                     setattr(acta, campo, _normalize_firmas_adicionales(data.get(campo)))
+                elif campo == "armado_equipos":
+                    acta.armado_equipos_json = _normalize_armado_equipos(data.get(campo))
                 else:
                     setattr(acta, campo, data.get(campo))
 
@@ -272,9 +450,24 @@ def actualizar_acta_entrega(id_acta_entrega):
                 return jsonify({"error": "tipo_instalacion invalido"}), 400
             acta.tipo_instalacion = tipo_instalacion
 
+        movimientos_devueltos = 0
+        if "armado_equipos" in data:
+            movimientos_devueltos = _registrar_movimientos_devuelto_bodega(
+                acta,
+                armado_equipos_antes,
+                acta.armado_equipos_json,
+                data.get("movimiento_tecnico_id"),
+            )
+
         _sync_codigo_ponton_si_tecnico(acta, data.get("codigo_ponton") if "codigo_ponton" in data else None)
 
         db.session.commit()
+        if movimientos_devueltos and acta.armado_id:
+            emit_armado_event("armado_updated", {
+                "armado_id": acta.armado_id,
+                "tipo": "equipo_devuelto_bodega",
+                "ts": datetime.utcnow().isoformat()
+            })
         return jsonify({"message": "Acta de entrega actualizada", "acta": _serialize_acta(acta)}), 200
     except Exception as e:
         db.session.rollback()

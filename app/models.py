@@ -565,6 +565,7 @@ class ActaEntrega(db.Model):
     recepciona_nombre = db.Column(db.String(120), nullable=True)
     firma_recepciona = db.Column(db.Text, nullable=True)
     equipos_considerados = db.Column(db.Text, nullable=True)
+    armado_equipos_json = db.Column(db.Text, nullable=True)
     centro_origen_traslado = db.Column(db.String(180), nullable=True)
     tipo_instalacion = db.Column(db.String(30), nullable=False, default='instalacion')
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)

@@ -645,6 +645,7 @@ def create_app():
         db.session.execute(text("ALTER TABLE armado_caja_movimientos ADD COLUMN IF NOT EXISTS accion VARCHAR(20)"))
         db.session.execute(text("ALTER TABLE armado_caja_movimientos ADD COLUMN IF NOT EXISTS cantidad_anterior NUMERIC(10, 2)"))
         db.session.execute(text("ALTER TABLE armado_caja_movimientos ADD COLUMN IF NOT EXISTS cantidad_nueva NUMERIC(10, 2)"))
+        db.session.execute(text("ALTER TABLE actas_entrega ADD COLUMN IF NOT EXISTS armado_equipos_json TEXT"))
         db.session.execute(
             text(
                 """
