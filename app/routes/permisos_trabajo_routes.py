@@ -1,4 +1,5 @@
 from datetime import datetime
+import json
 import re
 
 from flask import Blueprint, jsonify, request
@@ -21,12 +22,62 @@ def _parse_date(value):
         return None
 
 
+def _get_firmas_adicionales(value):
+    if not value:
+        return []
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, dict)]
+    try:
+        parsed = json.loads(value) if isinstance(value, str) else value
+        return parsed if isinstance(parsed, list) else []
+    except Exception:
+        return []
+
+
+def _normalize_firmas_adicionales(value):
+    if value in (None, "", []):
+        return None
+    payload = value
+    if isinstance(value, str):
+        try:
+            payload = json.loads(value)
+        except Exception:
+            return None
+    if not isinstance(payload, list):
+        return None
+    normalizadas = []
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        nombre = str(item.get("nombre") or "").strip()
+        firma = str(item.get("firma") or "").strip()
+        if not nombre:
+            continue
+        normalizadas.append({"nombre": nombre, "firma": firma or None})
+    return json.dumps(normalizadas, ensure_ascii=False) if normalizadas else None
+
+
 def _serialize_permiso(permiso):
     centro = permiso.centro
     acta = permiso.acta_entrega
     cliente_nombre = centro.cliente.nombre if centro and centro.cliente else None
     correo_centro = permiso.correo_centro or (centro.correo_centro if centro else None)
     telefono_centro = permiso.telefono_centro or (centro.telefono if centro else None)
+    recepciona_nombre = str(permiso.recepciona_nombre or "").strip()
+    if len(recepciona_nombre) <= 1 and acta and acta.recepciona_nombre:
+        recepciona_nombre = str(acta.recepciona_nombre or "").strip()
+    firmas_adicionales = _get_firmas_adicionales(permiso.firmas_tecnicos_adicionales)
+    if not firmas_adicionales and acta:
+        firmas_adicionales = _get_firmas_adicionales(acta.firmas_tecnicos_adicionales)
+    armado_equipos = []
+    try:
+        raw_equipos = acta.armado_equipos_json if acta else None
+        if raw_equipos:
+            parsed_equipos = json.loads(raw_equipos) if isinstance(raw_equipos, str) else raw_equipos
+            if isinstance(parsed_equipos, list):
+                armado_equipos = parsed_equipos
+    except Exception:
+        armado_equipos = []
     return {
         "id_permiso_trabajo": permiso.id_permiso_trabajo,
         "centro_id": permiso.centro_id,
@@ -39,13 +90,15 @@ def _serialize_permiso(permiso):
         "localidad": permiso.localidad,
         "tecnico_1": permiso.tecnico_1,
         "tecnico_2": permiso.tecnico_2,
-        "recepciona_nombre": permiso.recepciona_nombre,
+        "recepciona_nombre": recepciona_nombre or None,
         "recepciona_rut": permiso.recepciona_rut,
         "firma_tecnico_1": permiso.firma_tecnico_1 or (acta.firma_tecnico_1 if acta else None),
         "firma_tecnico_2": permiso.firma_tecnico_2 or (acta.firma_tecnico_2 if acta else None),
-        "firma_recepciona": permiso.firma_recepciona,
+        "firmas_tecnicos_adicionales": firmas_adicionales,
+        "firma_recepciona": permiso.firma_recepciona or (acta.firma_recepciona if acta else None),
         "puntos_gps": permiso.puntos_gps,
         "sellos": permiso.sellos,
+        "armado_equipos": armado_equipos,
         "medicion_fase_neutro": permiso.medicion_fase_neutro,
         "medicion_neutro_tierra": permiso.medicion_neutro_tierra,
         "hertz": permiso.hertz,
@@ -174,6 +227,7 @@ def crear_permiso_trabajo():
             firma_tecnico_1=data.get("firma_tecnico_1"),
             tecnico_2=data.get("tecnico_2"),
             firma_tecnico_2=data.get("firma_tecnico_2"),
+            firmas_tecnicos_adicionales=_normalize_firmas_adicionales(data.get("firmas_tecnicos_adicionales")),
             recepciona_nombre=data.get("recepciona_nombre"),
             recepciona_rut=data.get("recepciona_rut"),
             firma_recepciona=data.get("firma_recepciona"),
@@ -261,6 +315,7 @@ def actualizar_permiso_trabajo(id_permiso_trabajo):
             "firma_tecnico_1",
             "tecnico_2",
             "firma_tecnico_2",
+            "firmas_tecnicos_adicionales",
             "recepciona_nombre",
             "recepciona_rut",
             "firma_recepciona",
@@ -272,7 +327,10 @@ def actualizar_permiso_trabajo(id_permiso_trabajo):
             "descripcion_trabajo",
         ]:
             if campo in data:
-                setattr(permiso, campo, data.get(campo))
+                if campo == "firmas_tecnicos_adicionales":
+                    setattr(permiso, campo, _normalize_firmas_adicionales(data.get(campo)))
+                else:
+                    setattr(permiso, campo, data.get(campo))
 
         # Mantener sincronizado con ficha del centro cuando se edita desde permiso.
         if "correo_centro" in data:
