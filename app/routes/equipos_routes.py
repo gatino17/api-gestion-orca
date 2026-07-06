@@ -1,9 +1,12 @@
+import json
+
 from flask import Blueprint, request, jsonify
-from ..models import EquiposIP, Centro, db, Armado, ArmadoCajaMovimiento
+from ..models import EquiposIP, Centro, db, Armado, ArmadoCajaMovimiento, ActaEntrega
 from ..socketio_ext import emit_armado_event
 from datetime import datetime
 
 equipos_bp = Blueprint('equipos', __name__)
+ESTADOS_LOGISTICA_BODEGA_CERRADA = {"recepcionado_bodega", "revision_bodega", "baja_bodega"}
 
 
 def tocar_fecha_inicio(armado_id):
@@ -23,6 +26,56 @@ def caja_movimiento_equipo(equipo):
     if estado_registro == 'pendiente':
         return 'Pendiente'
     return equipo.caja or "Caja 1"
+
+
+def _parse_armado_equipos_json(raw_value):
+    if not raw_value:
+        return []
+    payload = raw_value
+    if isinstance(raw_value, str):
+        try:
+            payload = json.loads(raw_value)
+        except Exception:
+            return []
+    return payload if isinstance(payload, list) else []
+
+
+def _serie_conflicto_ya_en_bodega(equipo_conflicto, numero_serie):
+    if not equipo_conflicto or not numero_serie:
+        return False
+
+    serie = str(numero_serie or "").strip()
+    if not serie:
+        return False
+
+    actas = (
+        ActaEntrega.query
+        .filter(ActaEntrega.centro_id == equipo_conflicto.centro_id)
+        .order_by(ActaEntrega.updated_at.desc(), ActaEntrega.id_acta_entrega.desc())
+        .limit(30)
+        .all()
+    )
+
+    equipo_id_conflicto = int(equipo_conflicto.id_equipo or 0)
+    for acta in actas:
+        for item in _parse_armado_equipos_json(acta.armado_equipos_json):
+            if not isinstance(item, dict):
+                continue
+            try:
+                equipo_id_item = int(item.get("equipo_id") or 0)
+            except Exception:
+                equipo_id_item = 0
+            serie_item = str(item.get("numero_serie") or "").strip()
+            coincide_equipo = equipo_id_conflicto > 0 and equipo_id_item == equipo_id_conflicto
+            coincide_serie = serie_item == serie
+            if not coincide_equipo and not coincide_serie:
+                continue
+
+            estado_uso = str(item.get("estado_uso") or "instalado").strip().lower()
+            estado_logistico = str(item.get("estado_logistico") or "sin_movimiento").strip().lower()
+            return estado_uso == "devuelto_bodega" and estado_logistico in ESTADOS_LOGISTICA_BODEGA_CERRADA
+
+    return False
 
 # Obtener todos los equipos o equipos por centro_id
 @equipos_bp.route('/', methods=['GET'])
@@ -69,7 +122,14 @@ def validar_serie_equipo():
     if centro_id_actual:
         query = query.filter(EquiposIP.centro_id != centro_id_actual)
 
-    conflicto = query.order_by(EquiposIP.id_equipo.desc()).first()
+    conflictos = query.order_by(EquiposIP.id_equipo.desc()).all()
+    conflicto = None
+    for item in conflictos:
+        if _serie_conflicto_ya_en_bodega(item, numero_serie):
+            continue
+        conflicto = item
+        break
+
     if not conflicto:
         return jsonify({"duplicado": False}), 200
 
