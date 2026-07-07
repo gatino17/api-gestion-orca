@@ -353,6 +353,14 @@ def create_app():
         db.session.execute(
             text(
                 """
+                ALTER TABLE soporte
+                ADD COLUMN IF NOT EXISTS permiso_trabajo BOOLEAN DEFAULT FALSE
+                """
+            )
+        )
+        db.session.execute(
+            text(
+                """
                 ALTER TABLE users
                 ADD COLUMN IF NOT EXISTS supervisor_areas TEXT
                 """
