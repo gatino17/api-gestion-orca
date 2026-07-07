@@ -622,6 +622,7 @@ class MantencionTerreno(db.Model):
     __tablename__ = 'mantenciones_terreno'
 
     id_mantencion_terreno = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    actividad_id = db.Column(db.Integer, nullable=True, index=True)
     centro_id = db.Column(db.BigInteger, db.ForeignKey('centros.id_centro', ondelete="CASCADE"), nullable=False, index=True)
     fecha_ingreso = db.Column(db.Date, nullable=False, index=True)
     fecha_salida = db.Column(db.Date, nullable=True, index=True)
@@ -683,7 +684,11 @@ class CambioEquipoMantencion(db.Model):
     codigo_nuevo = db.Column(db.String(60), nullable=True)
     tecnico = db.Column(db.String(120), nullable=True)
     observacion = db.Column(db.Text, nullable=True)
+    estado_logistico = db.Column(db.String(30), nullable=False, default='en_transito_bodega', index=True)
+    recepcion_bodega_por = db.Column(db.String(120), nullable=True)
+    fecha_recepcion_bodega = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     mantencion = db.relationship(
         'MantencionTerreno',

@@ -151,8 +151,22 @@ def _serialize_mantencion(item):
                 firmas_adicionales = parsed
     except Exception:
         firmas_adicionales = []
+    cambios_equipo = []
+    try:
+        rows = sorted(
+            list(getattr(item, "cambios_equipo", []) or []),
+            key=lambda row: (
+                row.created_at or datetime.min,
+                row.id_cambio_equipo_mantencion or 0,
+            ),
+            reverse=True,
+        )
+        cambios_equipo = [_serialize_cambio_equipo(row) for row in rows]
+    except Exception:
+        cambios_equipo = []
     return {
         "id_mantencion_terreno": item.id_mantencion_terreno,
+        "actividad_id": getattr(item, "actividad_id", None),
         "centro_id": item.centro_id,
         "fecha_ingreso": item.fecha_ingreso.isoformat() if item.fecha_ingreso else None,
         "fecha_salida": item.fecha_salida.isoformat() if item.fecha_salida else None,
@@ -177,6 +191,7 @@ def _serialize_mantencion(item):
         "descripcion_trabajo": item.descripcion_trabajo,
         "evidencia_foto": item.evidencia_foto,
         "checklist_equipos": item.checklist_equipos,
+        "cambios_equipo": cambios_equipo,
         "empresa": cliente_nombre,
         "cliente": cliente_nombre,
         "centro": centro.nombre if centro else None,
@@ -202,7 +217,11 @@ def _serialize_cambio_equipo(item):
         "codigo_nuevo": item.codigo_nuevo,
         "tecnico": item.tecnico,
         "observacion": item.observacion,
+        "estado_logistico": item.estado_logistico or "en_transito_bodega",
+        "recepcion_bodega_por": item.recepcion_bodega_por,
+        "fecha_recepcion_bodega": item.fecha_recepcion_bodega.isoformat() if item.fecha_recepcion_bodega else None,
         "created_at": item.created_at.isoformat() if item.created_at else None,
+        "updated_at": item.updated_at.isoformat() if getattr(item, "updated_at", None) else None,
     }
 
 
@@ -252,6 +271,7 @@ def crear_mantencion_terreno():
 
         create_kwargs = dict(
             centro_id=centro_id,
+            actividad_id=data.get("actividad_id"),
             fecha_ingreso=fecha_ingreso,
             fecha_salida=_parse_date(data.get("fecha_salida")),
             correo_centro=data.get("correo_centro"),
@@ -342,6 +362,7 @@ def actualizar_mantencion_terreno(id_mantencion_terreno):
             )
 
         campos_update = [
+            "actividad_id",
             "correo_centro",
             "telefono_centro",
             "region",
@@ -499,6 +520,7 @@ def crear_cambio_equipo_mantencion(id_mantencion_terreno):
             codigo_nuevo=equipo.codigo,
             tecnico=tecnico,
             observacion=observacion,
+            estado_logistico="en_transito_bodega",
         )
         db.session.add(cambio)
 
@@ -524,3 +546,31 @@ def crear_cambio_equipo_mantencion(id_mantencion_terreno):
     except Exception as e:
         db.session.rollback()
         return jsonify({"error": f"Error al registrar cambio de equipo: {str(e)}"}), 500
+
+
+@mantenciones_terreno_blueprint.route('/cambios_equipo/<int:id_cambio_equipo_mantencion>/estado_logistico', methods=['PUT'])
+def actualizar_estado_logistico_cambio_equipo_mantencion(id_cambio_equipo_mantencion):
+    data = request.get_json() or {}
+    try:
+        cambio = CambioEquipoMantencion.query.get(id_cambio_equipo_mantencion)
+        if not cambio:
+            return jsonify({"error": "Cambio de equipo no encontrado"}), 404
+
+        estado_logistico = str(data.get("estado_logistico") or "").strip().lower()
+        permitidos = {"en_transito_bodega", "recepcionado_bodega", "revision_bodega", "baja_bodega", "eliminado"}
+        if estado_logistico not in permitidos:
+            return jsonify({"error": "estado_logistico invalido"}), 400
+
+        cambio.estado_logistico = estado_logistico
+        if estado_logistico == "recepcionado_bodega":
+            cambio.recepcion_bodega_por = (data.get("recepcion_bodega_por") or "").strip() or cambio.recepcion_bodega_por
+            cambio.fecha_recepcion_bodega = datetime.utcnow()
+        elif estado_logistico in {"en_transito_bodega", "eliminado"}:
+            cambio.recepcion_bodega_por = None
+            cambio.fecha_recepcion_bodega = None
+
+        db.session.commit()
+        return jsonify({"message": "Estado logístico actualizado", "cambio": _serialize_cambio_equipo(cambio)}), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": f"Error al actualizar estado logístico del cambio: {str(e)}"}), 500

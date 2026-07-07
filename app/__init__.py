@@ -306,6 +306,14 @@ def create_app():
             text(
                 """
                 ALTER TABLE mantenciones_terreno
+                ADD COLUMN IF NOT EXISTS actividad_id INTEGER
+                """
+            )
+        )
+        db.session.execute(
+            text(
+                """
+                ALTER TABLE mantenciones_terreno
                 ADD COLUMN IF NOT EXISTS responsabilidad VARCHAR(20)
                 """
             )
@@ -615,6 +623,19 @@ def create_app():
         db.session.execute(text("ALTER TABLE bodega_inventario_equipos ADD COLUMN IF NOT EXISTS fecha_devolucion TIMESTAMP"))
         db.session.execute(text("ALTER TABLE bodega_inventario_equipos ADD COLUMN IF NOT EXISTS observacion_asignacion TEXT"))
         db.session.execute(text("ALTER TABLE bodega_inventario_equipos ADD COLUMN IF NOT EXISTS observacion_devolucion TEXT"))
+        db.session.execute(text("ALTER TABLE cambios_equipo_mantencion ADD COLUMN IF NOT EXISTS estado_logistico VARCHAR(30) DEFAULT 'en_transito_bodega'"))
+        db.session.execute(text("ALTER TABLE cambios_equipo_mantencion ADD COLUMN IF NOT EXISTS recepcion_bodega_por VARCHAR(120)"))
+        db.session.execute(text("ALTER TABLE cambios_equipo_mantencion ADD COLUMN IF NOT EXISTS fecha_recepcion_bodega TIMESTAMP"))
+        db.session.execute(text("ALTER TABLE cambios_equipo_mantencion ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"))
+        db.session.execute(
+            text(
+                """
+                UPDATE cambios_equipo_mantencion
+                SET estado_logistico = 'en_transito_bodega'
+                WHERE estado_logistico IS NULL OR TRIM(estado_logistico) = ''
+                """
+            )
+        )
         db.session.execute(text("ALTER TABLE armados_guias_salida ADD COLUMN IF NOT EXISTS fecha_recepcion_centro TIMESTAMP"))
         db.session.execute(text("ALTER TABLE armados_guias_salida ADD COLUMN IF NOT EXISTS tipo_despacho VARCHAR(20) DEFAULT 'total'"))
         db.session.execute(text("ALTER TABLE armados_guias_salida ADD COLUMN IF NOT EXISTS modalidad_salida VARCHAR(30) DEFAULT 'guia'"))
