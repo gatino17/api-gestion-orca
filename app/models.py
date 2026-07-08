@@ -754,7 +754,9 @@ class RetiroTerrenoEquipo(db.Model):
     numero_serie = db.Column(db.String(60), nullable=True)
     codigo = db.Column(db.String(60), nullable=True)
     retirado = db.Column(db.Boolean, nullable=False, default=False)
+    modalidad_retorno = db.Column(db.String(30), nullable=False, default='despacho_orca')
     recibido_bodega = db.Column(db.Boolean, nullable=False, default=False)
+    estado_logistico = db.Column(db.String(30), nullable=False, default='en_transito_bodega', index=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
     retiro = db.relationship('RetiroTerreno', backref=db.backref('equipos', cascade="all, delete-orphan"))

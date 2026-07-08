@@ -1226,14 +1226,31 @@ def historial_equipos_armado(id_armado):
 
     retiro_por_item_id = {}
     retiro_por_nombre = {}
+    retiro_por_serie = {}
+
+    def _fecha_iso_a_ts(valor):
+        if not valor:
+            return 0
+        try:
+            return datetime.fromisoformat(str(valor).replace("Z", "+00:00")).timestamp()
+        except Exception:
+            return 0
+
     for retiro_eq in retiros_equipos:
         retiro = retiro_eq.retiro
         if not retiro:
             continue
+        estado_logistico_retiro = normalizar_texto(
+            getattr(retiro_eq, "estado_logistico", None)
+            or getattr(retiro, "estado_logistico", None)
+            or ""
+        )
         dato_retiro = {
             "serie_retirada": (retiro_eq.numero_serie or "").strip() or "-",
             "serie_retirada_fecha": retiro.fecha_retiro.isoformat() if retiro.fecha_retiro else None,
             "correlativo_retiro": str(retiro.id_retiro_terreno),
+            "ts_retiro": datetime.combine(retiro.fecha_retiro, datetime.min.time()).timestamp() if retiro.fecha_retiro else 0,
+            "estado_logistico": estado_logistico_retiro,
         }
         equipo_id = int(retiro_eq.equipo_id or 0) if retiro_eq.equipo_id else 0
         if equipo_id and equipo_id not in retiro_por_item_id:
@@ -1241,10 +1258,55 @@ def historial_equipos_armado(id_armado):
         nombre_key = normalizar_texto(retiro_eq.equipo_nombre or "")
         if nombre_key and nombre_key not in retiro_por_nombre:
             retiro_por_nombre[nombre_key] = dato_retiro
+        serie_key = normalizar_texto(retiro_eq.numero_serie or "")
+        if serie_key and serie_key not in retiro_por_serie:
+            retiro_por_serie[serie_key] = dato_retiro
+
+    def _resolver_retiro_actual(equipo_id=None, nombre="", series=None):
+        try:
+            equipo_id_int = int(equipo_id) if equipo_id not in (None, "", 0, "0") else 0
+        except Exception:
+            equipo_id_int = 0
+        if equipo_id_int:
+            retiro = retiro_por_item_id.get(equipo_id_int)
+            if retiro:
+                return retiro
+        for serie in (series or []):
+            serie_key = normalizar_texto(serie or "")
+            if not serie_key:
+                continue
+            retiro = retiro_por_serie.get(serie_key)
+            if retiro:
+                return retiro
+        nombre_key = normalizar_texto(nombre or "")
+        if nombre_key:
+            return retiro_por_nombre.get(nombre_key)
+        return None
+
+    def _retiro_fuera_de_centro(dato_retiro):
+        estado = normalizar_texto((dato_retiro or {}).get("estado_logistico") or "")
+        return estado in {"recepcionado_bodega", "revision_bodega", "baja_bodega", "eliminado", "en_bodega"}
 
     resumen_map = {}
     ultima_serie_por_item = {}
     eventos = []
+
+    def _agregar_historial_serie(item, serie, fecha, correlativo=None):
+        serie_limpia = (serie or "").strip()
+        if not serie_limpia or serie_limpia == "-":
+            return
+        historial = item.setdefault("series_historial", [])
+        if historial and (historial[-1].get("serie") or "").strip() == serie_limpia:
+            if fecha and not historial[-1].get("fecha"):
+                historial[-1]["fecha"] = fecha
+            if correlativo and not historial[-1].get("correlativo"):
+                historial[-1]["correlativo"] = correlativo
+            return
+        historial.append({
+            "serie": serie_limpia,
+            "fecha": fecha,
+            "correlativo": correlativo,
+        })
 
     for m in movimientos:
         item_key = int(m.item_id or 0)
@@ -1264,9 +1326,11 @@ def historial_equipos_armado(id_armado):
                 (equipo_actual.nombre if equipo_actual else None)
                 or (m.nombre_item or "")
             )
-            retiro_actual = retiro_por_item_id.get(item_key)
-            if not retiro_actual:
-                retiro_actual = retiro_por_nombre.get(normalizar_texto(nombre_base or ""))
+            retiro_actual = _resolver_retiro_actual(
+                equipo_id=item_key,
+                nombre=nombre_base,
+                series=[serie_mov]
+            )
             item = {
                 "item_id": item_key,
                 "nombre_item": nombre_base,
@@ -1285,9 +1349,11 @@ def historial_equipos_armado(id_armado):
                 "serie_devuelta_bodega": "-",
                 "ultimo_evento": accion_mov or "movimiento",
                 "cambios": 0,
-                "ultima_actualizacion": m.fecha.isoformat() if m.fecha else None
+                "ultima_actualizacion": m.fecha.isoformat() if m.fecha else None,
+                "series_historial": []
             }
             resumen_map[item_key] = item
+            _agregar_historial_serie(item, serie_mov, fecha_mov, correlativo_mov)
         else:
             item["ultimo_evento"] = accion_mov or item.get("ultimo_evento") or "movimiento"
             item["ultima_actualizacion"] = m.fecha.isoformat() if m.fecha else item["ultima_actualizacion"]
@@ -1298,6 +1364,7 @@ def historial_equipos_armado(id_armado):
             if serie_actual_anterior not in ("", "-"):
                 item["serie_anterior_actual"] = serie_actual_anterior
                 item["serie_anterior_actual_fecha"] = item.get("serie_actual_fecha")
+                _agregar_historial_serie(item, serie_actual_anterior, item.get("serie_actual_fecha"), item.get("correlativo_ultimo"))
             item["devuelto_bodega"] = True
             item["fecha_devuelto_bodega"] = fecha_mov
             item["serie_devuelta_bodega"] = serie_base_devuelta or "-"
@@ -1316,6 +1383,7 @@ def historial_equipos_armado(id_armado):
                 item["serie_anterior_actual_fecha"] = item.get("serie_actual_fecha")
                 item["serie_actual"] = serie_mov
                 item["serie_actual_fecha"] = fecha_mov
+                _agregar_historial_serie(item, serie_mov, fecha_mov, correlativo_mov)
                 if correlativo_mov:
                     item["correlativo_ultimo"] = correlativo_mov
             if serie_mov:
@@ -1350,13 +1418,38 @@ def historial_equipos_armado(id_armado):
                 item["serie_actual"] = serie_eq_actual
             if (item.get("serie_inicial") or "-") in ("", "-"):
                 item["serie_inicial"] = serie_eq_actual
-        retiro_actual = retiro_por_item_id.get(item_key)
-        if not retiro_actual:
-            retiro_actual = retiro_por_nombre.get(normalizar_texto(item.get("nombre_item") or ""))
+            _agregar_historial_serie(item, serie_eq_actual, item.get("serie_actual_fecha"), item.get("correlativo_ultimo"))
+        retiro_actual = _resolver_retiro_actual(
+            equipo_id=item_key,
+            nombre=item.get("nombre_item") or "",
+            series=[
+                item.get("serie_actual"),
+                item.get("serie_anterior_actual"),
+                item.get("serie_inicial"),
+                item.get("serie_devuelta_bodega"),
+            ],
+        )
         if retiro_actual:
             item["serie_retirada"] = retiro_actual.get("serie_retirada") or "-"
             item["serie_retirada_fecha"] = retiro_actual.get("serie_retirada_fecha")
             item["correlativo_retiro"] = retiro_actual.get("correlativo_retiro")
+            ts_retiro = float(retiro_actual.get("ts_retiro") or 0)
+            ts_actual = _fecha_iso_a_ts(item.get("serie_actual_fecha")) or _fecha_iso_a_ts(item.get("ultima_actualizacion"))
+            retiro_serie = (retiro_actual.get("serie_retirada") or "").strip()
+            serie_actual_item = (item.get("serie_actual") or "").strip()
+            retiro_actual_en_bodega = _retiro_fuera_de_centro(retiro_actual)
+            debe_marcar_devuelto = bool(ts_retiro and ts_retiro >= ts_actual)
+            if retiro_actual_en_bodega and retiro_serie and serie_actual_item and retiro_serie == serie_actual_item:
+                debe_marcar_devuelto = True
+            if debe_marcar_devuelto:
+                if (item.get("serie_actual") or "-") not in ("", "-"):
+                    item["serie_anterior_actual"] = item.get("serie_actual") or "-"
+                    item["serie_anterior_actual_fecha"] = item.get("serie_actual_fecha")
+                item["devuelto_bodega"] = True
+                item["fecha_devuelto_bodega"] = item.get("serie_retirada_fecha")
+                item["serie_devuelta_bodega"] = item.get("serie_retirada") or "-"
+                item["serie_actual"] = "-"
+                item["serie_actual_fecha"] = item.get("serie_retirada_fecha")
         else:
             item["serie_retirada"] = item.get("serie_retirada") or "-"
             item["serie_retirada_fecha"] = item.get("serie_retirada_fecha")
@@ -1369,7 +1462,11 @@ def historial_equipos_armado(id_armado):
             continue
         nombre_eq = (eq.nombre or "").strip() or "-"
         serie_eq = (eq.numero_serie or "").strip() or "-"
-        retiro_actual = retiro_por_item_id.get(equipo_id) or retiro_por_nombre.get(normalizar_texto(nombre_eq))
+        retiro_actual = _resolver_retiro_actual(
+            equipo_id=equipo_id,
+            nombre=nombre_eq,
+            series=[serie_eq]
+        )
         resumen_map[equipo_id] = {
             "item_id": equipo_id,
             "nombre_item": nombre_eq,
@@ -1389,9 +1486,48 @@ def historial_equipos_armado(id_armado):
             "ultimo_evento": "estado_actual",
             "cambios": 0,
             "ultima_actualizacion": None,
+            "series_historial": [],
         }
+        _agregar_historial_serie(resumen_map[equipo_id], serie_eq, None, None)
+        if retiro_actual:
+            resumen_map[equipo_id]["devuelto_bodega"] = True
+            resumen_map[equipo_id]["fecha_devuelto_bodega"] = retiro_actual.get("serie_retirada_fecha")
+            resumen_map[equipo_id]["serie_devuelta_bodega"] = retiro_actual.get("serie_retirada") or "-"
+            resumen_map[equipo_id]["serie_actual"] = "-"
+            resumen_map[equipo_id]["serie_actual_fecha"] = retiro_actual.get("serie_retirada_fecha")
 
     resumen_lista = list(resumen_map.values())
+    for item in resumen_lista:
+        historial_series = [
+            h for h in (item.get("series_historial") or [])
+            if (h.get("serie") or "").strip() not in ("", "-")
+        ]
+        serie_inicial_entry = historial_series[0] if historial_series else {
+            "serie": item.get("serie_inicial") or "-",
+            "fecha": item.get("serie_inicial_fecha"),
+            "correlativo": None,
+        }
+        item["serie_inicial"] = serie_inicial_entry.get("serie") or item.get("serie_inicial") or "-"
+        item["serie_inicial_fecha"] = serie_inicial_entry.get("fecha") or item.get("serie_inicial_fecha")
+
+        series_anteriores = historial_series[1:-1] if len(historial_series) > 2 else []
+
+        item["series_anteriores"] = [
+            {
+                "serie": (h.get("serie") or "-"),
+                "fecha": h.get("fecha"),
+                "correlativo": h.get("correlativo"),
+            }
+            for h in series_anteriores
+        ]
+        if len(historial_series) >= 2:
+            ultima_anterior = historial_series[-2]
+            item["serie_anterior_actual"] = ultima_anterior.get("serie") or "-"
+            item["serie_anterior_actual_fecha"] = ultima_anterior.get("fecha")
+        elif not item.get("serie_anterior_actual"):
+            item["serie_anterior_actual"] = "-"
+            item["serie_anterior_actual_fecha"] = None
+
     if claves_referencia_acta:
         resumen_lista = [
             item for item in resumen_lista
@@ -1405,10 +1541,31 @@ def historial_equipos_armado(id_armado):
                 }) in claves_referencia_acta
                 or _clave_equipo_referencia({
                     "nombre_item": item.get("nombre_item"),
+                    "serie_actual": item.get("serie_anterior_actual"),
+                    "numero_serie": item.get("serie_anterior_actual"),
+                    "codigo": "",
+                }) in claves_referencia_acta
+                or _clave_equipo_referencia({
+                    "nombre_item": item.get("nombre_item"),
                     "serie_actual": item.get("serie_inicial"),
                     "numero_serie": item.get("serie_inicial"),
                     "codigo": "",
                 }) in claves_referencia_acta
+                or _clave_equipo_referencia({
+                    "nombre_item": item.get("nombre_item"),
+                    "serie_actual": item.get("serie_retirada"),
+                    "numero_serie": item.get("serie_retirada"),
+                    "codigo": "",
+                }) in claves_referencia_acta
+                or any(
+                    _clave_equipo_referencia({
+                        "nombre_item": item.get("nombre_item"),
+                        "serie_actual": hist.get("serie"),
+                        "numero_serie": hist.get("serie"),
+                        "codigo": "",
+                    }) in claves_referencia_acta
+                    for hist in (item.get("series_anteriores") or [])
+                )
             )
         ]
 
@@ -1418,28 +1575,12 @@ def historial_equipos_armado(id_armado):
     )
 
     total_equipos_referencia = len(acta_equipos_referencia) if acta_equipos_referencia else len(resumen)
-    equipos_instalados_referencia = (
-        len([
-            item
-            for item in acta_equipos_referencia
-            if normalizar_texto(item.get("estado_uso") or "instalado") == "instalado"
-        ])
-        if acta_equipos_referencia
-        else len([
-            item
-            for item in resumen
-            if str(item.get("serie_actual") or "").strip() not in ("", "-") and not item.get("devuelto_bodega")
-        ])
-    )
-    equipos_devueltos_referencia = (
-        len([
-            item
-            for item in acta_equipos_referencia
-            if normalizar_texto(item.get("estado_uso") or "") == "devuelto_bodega"
-        ])
-        if acta_equipos_referencia
-        else len([item for item in resumen if item.get("devuelto_bodega")])
-    )
+    equipos_instalados_referencia = len([
+        item
+        for item in resumen
+        if str(item.get("serie_actual") or "").strip() not in ("", "-") and not item.get("devuelto_bodega")
+    ])
+    equipos_devueltos_referencia = len([item for item in resumen if item.get("devuelto_bodega")])
 
     return jsonify({
         "armado": {

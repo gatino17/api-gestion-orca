@@ -55,7 +55,9 @@ def _serialize_equipo(item: RetiroTerrenoEquipo):
         "numero_serie": item.numero_serie,
         "codigo": item.codigo,
         "retirado": bool(item.retirado),
+        "modalidad_retorno": item.modalidad_retorno or "despacho_orca",
         "recibido_bodega": bool(item.recibido_bodega),
+        "estado_logistico": item.estado_logistico or ("recepcionado_bodega" if bool(item.recibido_bodega) else "en_transito_bodega"),
         "created_at": item.created_at.isoformat() if item.created_at else None,
     }
 
@@ -104,7 +106,14 @@ def _build_equipos_rows(payload_rows):
         numero_serie = str(raw.get("numero_serie") or "").strip() or None
         codigo = str(raw.get("codigo") or "").strip() or None
         retirado = _normalize_bool(raw.get("retirado"))
+        modalidad_retorno = str(raw.get("modalidad_retorno") or "").strip().lower()
+        if modalidad_retorno not in ("por_mano", "despacho_orca"):
+            modalidad_retorno = "despacho_orca"
         recibido_bodega = _normalize_bool(raw.get("recibido_bodega"))
+        estado_logistico = str(raw.get("estado_logistico") or "").strip().lower()
+        permitidos_logistica = {"sin_movimiento", "en_transito_bodega", "recepcionado_bodega", "revision_bodega", "baja_bodega", "eliminado"}
+        if estado_logistico not in permitidos_logistica:
+            estado_logistico = "recepcionado_bodega" if recibido_bodega else ("en_transito_bodega" if retirado else "sin_movimiento")
         if not equipo_nombre:
             if equipo_id:
                 ref = EquiposIP.query.get(equipo_id)
@@ -119,10 +128,48 @@ def _build_equipos_rows(payload_rows):
                 numero_serie=numero_serie,
                 codigo=codigo,
                 retirado=retirado,
+                modalidad_retorno=modalidad_retorno,
                 recibido_bodega=recibido_bodega,
+                estado_logistico=estado_logistico,
             )
         )
     return rows
+
+
+def _estado_logistico_equipo_desde_flags(eq):
+    estado = str(getattr(eq, "estado_logistico", "") or "").strip().lower()
+    if estado:
+        return estado
+    if bool(getattr(eq, "recibido_bodega", False)):
+        return "recepcionado_bodega"
+    if bool(getattr(eq, "retirado", False)):
+        return "en_transito_bodega"
+    return "sin_movimiento"
+
+
+def _sincronizar_estado_retiro(item: RetiroTerreno):
+    equipos_retirados = [eq for eq in (item.equipos or []) if bool(getattr(eq, "retirado", False))]
+    if not equipos_retirados:
+        item.estado_logistico = "retirado_centro"
+        item.fecha_recepcion_bodega = None
+        return
+
+    estados = [_estado_logistico_equipo_desde_flags(eq) for eq in equipos_retirados]
+    tiene_transito = any(estado == "en_transito_bodega" for estado in estados)
+    tiene_bodega = any(estado in {"recepcionado_bodega", "revision_bodega"} for estado in estados)
+
+    if tiene_transito:
+        item.estado_logistico = "en_transito"
+    elif tiene_bodega:
+        item.estado_logistico = "en_bodega"
+    else:
+        item.estado_logistico = "retirado_centro"
+
+    if any(estado in {"recepcionado_bodega", "revision_bodega", "baja_bodega"} for estado in estados):
+        if not item.fecha_recepcion_bodega:
+            item.fecha_recepcion_bodega = datetime.utcnow()
+    else:
+        item.fecha_recepcion_bodega = None
 
 
 @retiros_terreno_blueprint.route('/', methods=['GET'])
@@ -324,8 +371,6 @@ def recepcionar_retiro_en_bodega(id_retiro_terreno):
         if not item:
             return jsonify({"error": "Retiro en terreno no encontrado"}), 404
 
-        item.estado_logistico = "en_bodega"
-        item.fecha_recepcion_bodega = datetime.utcnow()
         item.recepcion_bodega_por = data.get("recepcion_bodega_por") or item.recepcion_bodega_por
         item.recepcion_bodega_user_id = data.get("recepcion_bodega_user_id") or item.recepcion_bodega_user_id
         item.observacion_bodega = data.get("observacion_bodega") or item.observacion_bodega
@@ -348,8 +393,63 @@ def recepcionar_retiro_en_bodega(id_retiro_terreno):
                 if "recibido_bodega" in raw:
                     eq.recibido_bodega = _normalize_bool(raw.get("recibido_bodega"))
 
+                    eq.estado_logistico = "recepcionado_bodega" if eq.recibido_bodega else ("en_transito_bodega" if bool(getattr(eq, "retirado", False)) else "sin_movimiento")
+
+        _sincronizar_estado_retiro(item)
+        equipos_retirados = [eq for eq in (item.equipos or []) if bool(getattr(eq, "retirado", False))]
+        todos_recepcionados = bool(equipos_retirados) and all(
+            _estado_logistico_equipo_desde_flags(eq) in {"recepcionado_bodega", "revision_bodega"} for eq in equipos_retirados
+        )
+
         db.session.commit()
-        return jsonify({"message": "Retiro recepcionado en bodega", "retiro": _serialize_retiro(item)}), 200
+        return jsonify({
+            "message": "Retiro recepcionado en bodega" if todos_recepcionados else "Recepcion parcial guardada",
+            "retiro": _serialize_retiro(item)
+        }), 200
     except Exception as e:
         db.session.rollback()
         return jsonify({"error": f"Error al recepcionar retiro en bodega: {str(e)}"}), 500
+
+
+@retiros_terreno_blueprint.route('/<int:id_retiro_terreno>/actualizar_logistica_bodega', methods=['POST'])
+def actualizar_logistica_bodega_retiro(id_retiro_terreno):
+    data = request.get_json() or {}
+    try:
+        item = RetiroTerreno.query.get(id_retiro_terreno)
+        if not item:
+            return jsonify({"error": "Retiro en terreno no encontrado"}), 404
+
+        equipos_payload = data.get("equipos")
+        permitidos = {"sin_movimiento", "en_transito_bodega", "recepcionado_bodega", "revision_bodega", "baja_bodega", "eliminado"}
+        if not isinstance(equipos_payload, list):
+            return jsonify({"error": "equipos debe ser una lista"}), 400
+
+        by_id = {
+            int(eq.id_retiro_equipo): eq
+            for eq in (item.equipos or [])
+            if getattr(eq, "id_retiro_equipo", None) is not None
+        }
+        for raw in equipos_payload:
+            try:
+                eq_id = int(raw.get("id_retiro_equipo"))
+            except Exception:
+                continue
+            eq = by_id.get(eq_id)
+            if not eq:
+                continue
+            estado = str(raw.get("estado_logistico") or "").strip().lower()
+            if estado not in permitidos:
+                continue
+            eq.estado_logistico = estado
+            eq.recibido_bodega = estado in {"recepcionado_bodega", "revision_bodega", "baja_bodega"}
+
+        item.recepcion_bodega_por = data.get("recepcion_bodega_por") or item.recepcion_bodega_por
+        item.recepcion_bodega_user_id = data.get("recepcion_bodega_user_id") or item.recepcion_bodega_user_id
+        item.observacion_bodega = data.get("observacion_bodega") or item.observacion_bodega
+        _sincronizar_estado_retiro(item)
+
+        db.session.commit()
+        return jsonify({"message": "Logistica de bodega actualizada", "retiro": _serialize_retiro(item)}), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": f"Error al actualizar logistica de bodega: {str(e)}"}), 500

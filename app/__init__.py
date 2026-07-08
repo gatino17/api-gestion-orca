@@ -138,8 +138,38 @@ def create_app():
 
     with app.app_context():
         db.create_all()
+        _db_execute = db.session.execute
+        migration_lock_key = 84573219
+        try:
+            migration_lock_ok = bool(
+                _db_execute(
+                    text("SELECT pg_try_advisory_lock(:key)"),
+                    {"key": migration_lock_key}
+                ).scalar()
+            )
+        except Exception:
+            migration_lock_ok = True
+
+        def _schema_exec(statement, params=None):
+            if not migration_lock_ok:
+                return None
+            try:
+                _db_execute(text("SET LOCAL lock_timeout = '1200ms'"))
+                if params is None:
+                    return _db_execute(statement)
+                return _db_execute(statement, params)
+            except Exception as exc:
+                db.session.rollback()
+                msg = str(exc).lower()
+                if "deadlock detected" in msg or "lock timeout" in msg or "canceling statement due to lock timeout" in msg:
+                    print(f"[schema] migracion omitida por lock: {str(statement).strip()[:120]}")
+                    return None
+                raise
+
+        if not migration_lock_ok:
+            print("[schema] migraciones automaticas omitidas: otro proceso mantiene el lock de esquema")
         # Compat de esquema: snapshot de numero_serie por movimiento de caja.
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 ALTER TABLE armado_caja_movimientos
@@ -147,7 +177,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 ALTER TABLE armados
@@ -155,7 +185,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 ALTER TABLE armados
@@ -163,7 +193,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 ALTER TABLE armados
@@ -171,7 +201,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 ALTER TABLE centros
@@ -179,7 +209,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 ALTER TABLE equipos_ip
@@ -187,7 +217,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 ALTER TABLE equipos_ip
@@ -195,7 +225,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 ALTER TABLE armados_materiales
@@ -203,7 +233,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 ALTER TABLE armados_materiales
@@ -211,7 +241,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 UPDATE centros
@@ -220,7 +250,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 ALTER TABLE actas_entrega
@@ -228,7 +258,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 ALTER TABLE actas_entrega
@@ -236,7 +266,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 ALTER TABLE actas_entrega
@@ -245,7 +275,7 @@ def create_app():
             )
         )
         # Firmas en base64 pueden superar 255 caracteres; asegurar columnas tipo TEXT.
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 ALTER TABLE actas_entrega
@@ -253,7 +283,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 ALTER TABLE actas_entrega
@@ -261,7 +291,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 ALTER TABLE actas_entrega
@@ -269,7 +299,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 ALTER TABLE actas_entrega
@@ -277,7 +307,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 UPDATE actas_entrega
@@ -286,7 +316,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 ALTER TABLE permisos_trabajo
@@ -294,7 +324,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 ALTER TABLE permisos_trabajo
@@ -302,7 +332,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 ALTER TABLE mantenciones_terreno
@@ -310,7 +340,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 ALTER TABLE mantenciones_terreno
@@ -318,7 +348,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 ALTER TABLE mantenciones_terreno
@@ -326,7 +356,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 ALTER TABLE mantenciones_terreno
@@ -334,7 +364,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 ALTER TABLE soporte
@@ -342,7 +372,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 ALTER TABLE soporte
@@ -350,7 +380,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 ALTER TABLE soporte
@@ -358,7 +388,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 ALTER TABLE soporte
@@ -366,7 +396,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 ALTER TABLE users
@@ -374,7 +404,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 ALTER TABLE encargados
@@ -382,7 +412,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 CREATE UNIQUE INDEX IF NOT EXISTS uq_encargados_user_id
@@ -390,7 +420,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 CREATE TABLE IF NOT EXISTS roles (
@@ -401,7 +431,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 CREATE TABLE IF NOT EXISTS role_pages (
@@ -412,7 +442,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 CREATE TABLE IF NOT EXISTS soporte_case_tomados (
@@ -425,7 +455,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 ALTER TABLE soporte_case_tomados
@@ -433,7 +463,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 ALTER TABLE soporte_case_tomados
@@ -441,7 +471,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 CREATE UNIQUE INDEX IF NOT EXISTS uq_soporte_case_tomados_ismael_id
@@ -450,7 +480,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 ALTER TABLE retiros_terreno
@@ -458,7 +488,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 ALTER TABLE retiros_terreno
@@ -466,7 +496,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 ALTER TABLE retiros_terreno
@@ -474,7 +504,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 ALTER TABLE retiros_terreno
@@ -482,7 +512,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 ALTER TABLE retiros_terreno_equipos
@@ -490,7 +520,36 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
+            text(
+                """
+                ALTER TABLE retiros_terreno_equipos
+                ADD COLUMN IF NOT EXISTS modalidad_retorno VARCHAR(30) DEFAULT 'despacho_orca'
+                """
+            )
+        )
+        _schema_exec(
+            text(
+                """
+                ALTER TABLE retiros_terreno_equipos
+                ADD COLUMN IF NOT EXISTS estado_logistico VARCHAR(30) DEFAULT 'en_transito_bodega'
+                """
+            )
+        )
+        _schema_exec(
+            text(
+                """
+                UPDATE retiros_terreno_equipos
+                SET estado_logistico = CASE
+                    WHEN COALESCE(recibido_bodega, FALSE) = TRUE THEN 'recepcionado_bodega'
+                    WHEN COALESCE(retirado, FALSE) = TRUE THEN 'en_transito_bodega'
+                    ELSE 'sin_movimiento'
+                END
+                WHERE estado_logistico IS NULL OR estado_logistico = ''
+                """
+            )
+        )
+        _schema_exec(
             text(
                 """
                 CREATE TABLE IF NOT EXISTS tecnico_bloqueos (
@@ -508,7 +567,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 ALTER TABLE revision_equipos_detalles
@@ -516,7 +575,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 ALTER TABLE revision_equipos_detalles
@@ -524,7 +583,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 ALTER TABLE revision_equipos_ordenes
@@ -532,7 +591,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 CREATE TABLE IF NOT EXISTS revision_equipos_eventos (
@@ -549,7 +608,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 ALTER TABLE rendiciones_gastos
@@ -557,7 +616,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 ALTER TABLE rendiciones_gastos
@@ -565,7 +624,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 ALTER TABLE rendiciones_gastos
@@ -573,7 +632,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 ALTER TABLE rendiciones_gastos
@@ -581,7 +640,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 ALTER TABLE rendiciones_gastos
@@ -589,7 +648,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 ALTER TABLE rendiciones_gastos
@@ -597,7 +656,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 ALTER TABLE retiros_terreno
@@ -605,7 +664,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 UPDATE retiros_terreno
@@ -614,20 +673,20 @@ def create_app():
                 """
             )
         )
-        db.session.execute(text("ALTER TABLE bodega_inventario_equipos ADD COLUMN IF NOT EXISTS estado_asignacion VARCHAR(30) DEFAULT 'en_bodega'"))
-        db.session.execute(text("ALTER TABLE bodega_inventario_equipos ADD COLUMN IF NOT EXISTS tecnico_asignado_id INTEGER REFERENCES users(id) ON DELETE SET NULL"))
-        db.session.execute(text("ALTER TABLE bodega_inventario_equipos ADD COLUMN IF NOT EXISTS tecnico_asignado_nombre VARCHAR(120)"))
-        db.session.execute(text("ALTER TABLE bodega_inventario_equipos ADD COLUMN IF NOT EXISTS asignado_por_id INTEGER REFERENCES users(id) ON DELETE SET NULL"))
-        db.session.execute(text("ALTER TABLE bodega_inventario_equipos ADD COLUMN IF NOT EXISTS asignado_por_nombre VARCHAR(120)"))
-        db.session.execute(text("ALTER TABLE bodega_inventario_equipos ADD COLUMN IF NOT EXISTS fecha_asignacion TIMESTAMP"))
-        db.session.execute(text("ALTER TABLE bodega_inventario_equipos ADD COLUMN IF NOT EXISTS fecha_devolucion TIMESTAMP"))
-        db.session.execute(text("ALTER TABLE bodega_inventario_equipos ADD COLUMN IF NOT EXISTS observacion_asignacion TEXT"))
-        db.session.execute(text("ALTER TABLE bodega_inventario_equipos ADD COLUMN IF NOT EXISTS observacion_devolucion TEXT"))
-        db.session.execute(text("ALTER TABLE cambios_equipo_mantencion ADD COLUMN IF NOT EXISTS estado_logistico VARCHAR(30) DEFAULT 'en_transito_bodega'"))
-        db.session.execute(text("ALTER TABLE cambios_equipo_mantencion ADD COLUMN IF NOT EXISTS recepcion_bodega_por VARCHAR(120)"))
-        db.session.execute(text("ALTER TABLE cambios_equipo_mantencion ADD COLUMN IF NOT EXISTS fecha_recepcion_bodega TIMESTAMP"))
-        db.session.execute(text("ALTER TABLE cambios_equipo_mantencion ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"))
-        db.session.execute(
+        _schema_exec(text("ALTER TABLE bodega_inventario_equipos ADD COLUMN IF NOT EXISTS estado_asignacion VARCHAR(30) DEFAULT 'en_bodega'"))
+        _schema_exec(text("ALTER TABLE bodega_inventario_equipos ADD COLUMN IF NOT EXISTS tecnico_asignado_id INTEGER REFERENCES users(id) ON DELETE SET NULL"))
+        _schema_exec(text("ALTER TABLE bodega_inventario_equipos ADD COLUMN IF NOT EXISTS tecnico_asignado_nombre VARCHAR(120)"))
+        _schema_exec(text("ALTER TABLE bodega_inventario_equipos ADD COLUMN IF NOT EXISTS asignado_por_id INTEGER REFERENCES users(id) ON DELETE SET NULL"))
+        _schema_exec(text("ALTER TABLE bodega_inventario_equipos ADD COLUMN IF NOT EXISTS asignado_por_nombre VARCHAR(120)"))
+        _schema_exec(text("ALTER TABLE bodega_inventario_equipos ADD COLUMN IF NOT EXISTS fecha_asignacion TIMESTAMP"))
+        _schema_exec(text("ALTER TABLE bodega_inventario_equipos ADD COLUMN IF NOT EXISTS fecha_devolucion TIMESTAMP"))
+        _schema_exec(text("ALTER TABLE bodega_inventario_equipos ADD COLUMN IF NOT EXISTS observacion_asignacion TEXT"))
+        _schema_exec(text("ALTER TABLE bodega_inventario_equipos ADD COLUMN IF NOT EXISTS observacion_devolucion TEXT"))
+        _schema_exec(text("ALTER TABLE cambios_equipo_mantencion ADD COLUMN IF NOT EXISTS estado_logistico VARCHAR(30) DEFAULT 'en_transito_bodega'"))
+        _schema_exec(text("ALTER TABLE cambios_equipo_mantencion ADD COLUMN IF NOT EXISTS recepcion_bodega_por VARCHAR(120)"))
+        _schema_exec(text("ALTER TABLE cambios_equipo_mantencion ADD COLUMN IF NOT EXISTS fecha_recepcion_bodega TIMESTAMP"))
+        _schema_exec(text("ALTER TABLE cambios_equipo_mantencion ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"))
+        _schema_exec(
             text(
                 """
                 UPDATE cambios_equipo_mantencion
@@ -636,14 +695,14 @@ def create_app():
                 """
             )
         )
-        db.session.execute(text("ALTER TABLE armados_guias_salida ADD COLUMN IF NOT EXISTS fecha_recepcion_centro TIMESTAMP"))
-        db.session.execute(text("ALTER TABLE armados_guias_salida ADD COLUMN IF NOT EXISTS tipo_despacho VARCHAR(20) DEFAULT 'total'"))
-        db.session.execute(text("ALTER TABLE armados_guias_salida ADD COLUMN IF NOT EXISTS modalidad_salida VARCHAR(30) DEFAULT 'guia'"))
-        db.session.execute(text("ALTER TABLE armados_guias_salida ADD COLUMN IF NOT EXISTS cajas_json TEXT"))
-        db.session.execute(text("ALTER TABLE armados_guias_salida ADD COLUMN IF NOT EXISTS estado VARCHAR(40) DEFAULT 'en_transito_centro'"))
-        db.session.execute(text("ALTER TABLE armados_guias_salida ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"))
-        db.session.execute(text("ALTER TABLE armados_guias_salida ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"))
-        db.session.execute(
+        _schema_exec(text("ALTER TABLE armados_guias_salida ADD COLUMN IF NOT EXISTS fecha_recepcion_centro TIMESTAMP"))
+        _schema_exec(text("ALTER TABLE armados_guias_salida ADD COLUMN IF NOT EXISTS tipo_despacho VARCHAR(20) DEFAULT 'total'"))
+        _schema_exec(text("ALTER TABLE armados_guias_salida ADD COLUMN IF NOT EXISTS modalidad_salida VARCHAR(30) DEFAULT 'guia'"))
+        _schema_exec(text("ALTER TABLE armados_guias_salida ADD COLUMN IF NOT EXISTS cajas_json TEXT"))
+        _schema_exec(text("ALTER TABLE armados_guias_salida ADD COLUMN IF NOT EXISTS estado VARCHAR(40) DEFAULT 'en_transito_centro'"))
+        _schema_exec(text("ALTER TABLE armados_guias_salida ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"))
+        _schema_exec(text("ALTER TABLE armados_guias_salida ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"))
+        _schema_exec(
             text(
                 """
                 DO $$
@@ -663,7 +722,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 CREATE INDEX IF NOT EXISTS ix_armados_guias_salida_armado_id
@@ -671,11 +730,11 @@ def create_app():
                 """
             )
         )
-        db.session.execute(text("ALTER TABLE armado_caja_movimientos ADD COLUMN IF NOT EXISTS accion VARCHAR(20)"))
-        db.session.execute(text("ALTER TABLE armado_caja_movimientos ADD COLUMN IF NOT EXISTS cantidad_anterior NUMERIC(10, 2)"))
-        db.session.execute(text("ALTER TABLE armado_caja_movimientos ADD COLUMN IF NOT EXISTS cantidad_nueva NUMERIC(10, 2)"))
-        db.session.execute(text("ALTER TABLE actas_entrega ADD COLUMN IF NOT EXISTS armado_equipos_json TEXT"))
-        db.session.execute(
+        _schema_exec(text("ALTER TABLE armado_caja_movimientos ADD COLUMN IF NOT EXISTS accion VARCHAR(20)"))
+        _schema_exec(text("ALTER TABLE armado_caja_movimientos ADD COLUMN IF NOT EXISTS cantidad_anterior NUMERIC(10, 2)"))
+        _schema_exec(text("ALTER TABLE armado_caja_movimientos ADD COLUMN IF NOT EXISTS cantidad_nueva NUMERIC(10, 2)"))
+        _schema_exec(text("ALTER TABLE actas_entrega ADD COLUMN IF NOT EXISTS armado_equipos_json TEXT"))
+        _schema_exec(
             text(
                 """
                 DO $$
@@ -698,7 +757,7 @@ def create_app():
                 """
             )
         )
-        db.session.execute(
+        _schema_exec(
             text(
                 """
                 UPDATE bodega_inventario_equipos
@@ -709,5 +768,12 @@ def create_app():
         )
         seed_default_roles(db)
         db.session.commit()
+        if migration_lock_ok:
+            try:
+                _db_execute(text("SELECT pg_advisory_unlock(:key)"), {"key": migration_lock_key})
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
 
     return app
+
