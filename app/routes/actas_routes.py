@@ -8,12 +8,15 @@ from .instalaciones_routes import crear_instalacion_logic, eliminar_instalacione
 from .mantenciones_routes import obtener_mantenciones_por_centro, crear_mantencion_logic, eliminar_mantenciones_por_centro, eliminar_mantencion_por_id, descargar_documento_mantencion
 from .inventarios_routes import crear_inventario_logic, actualizar_inventario_logic, eliminar_inventario_logic, obtener_inventarios_logic,eliminar_inventarios_por_centro
 from ..models import (
+    ActaEntrega,
     Cese,
     Levantamiento,
     InstalacionNueva,
     Retiro,
     Traslado,
     Mantencion,
+    MantencionTerreno,
+    PermisoTrabajo,
     ServiciosAdicionales,
     Inventario,
     Centro,
@@ -61,6 +64,20 @@ def listar_actas():
             InstalacionNueva.fecha_instalacion.label("fecha_instalacion")
         ).join(Centro, InstalacionNueva.centro_id == Centro.id_centro).subquery()
 
+        actas_entrega_subq = db.session.query(
+            ActaEntrega.centro_id.label("cid"),
+            func.count(ActaEntrega.id_acta_entrega).label("cantidad_actas_sistema"),
+            func.max(ActaEntrega.fecha_registro).label("ultima_fecha_acta_sistema")
+        ).join(Centro, ActaEntrega.centro_id == Centro.id_centro)\
+         .group_by(ActaEntrega.centro_id).subquery()
+
+        permisos_trabajo_subq = db.session.query(
+            PermisoTrabajo.centro_id.label("cid"),
+            func.count(PermisoTrabajo.id_permiso_trabajo).label("cantidad_permisos_sistema"),
+            func.max(PermisoTrabajo.fecha_ingreso).label("ultima_fecha_permiso_sistema")
+        ).join(Centro, PermisoTrabajo.centro_id == Centro.id_centro)\
+         .group_by(PermisoTrabajo.centro_id).subquery()
+
         levantamientos_subq = db.session.query(
             Levantamiento.centro_id.label("cid"),
             Levantamiento.id_levantamiento.label("id_levantamiento"),  # Aquí agregas el ID
@@ -81,6 +98,13 @@ def listar_actas():
             ).label("documento_mantencion"),
             Mantencion.fecha_mantencion.label("fecha_mantencion")
         ).join(Centro, Mantencion.centro_id == Centro.id_centro).subquery()
+
+        mantenciones_terreno_subq = db.session.query(
+            MantencionTerreno.centro_id.label("cid"),
+            func.count(MantencionTerreno.id_mantencion_terreno).label("cantidad_mantenciones_sistema"),
+            func.max(MantencionTerreno.fecha_ingreso).label("ultima_fecha_mantencion_sistema")
+        ).join(Centro, MantencionTerreno.centro_id == Centro.id_centro)\
+         .group_by(MantencionTerreno.centro_id).subquery()
 
         retiros_subq = db.session.query(
             Retiro.centro_id.label("cid"),
@@ -132,10 +156,16 @@ def listar_actas():
             Cliente.nombre.label("nombre_cliente"),
             instalaciones_subq.c.documento_instalacion,
             instalaciones_subq.c.fecha_instalacion,
+            actas_entrega_subq.c.cantidad_actas_sistema,
+            actas_entrega_subq.c.ultima_fecha_acta_sistema,
+            permisos_trabajo_subq.c.cantidad_permisos_sistema,
+            permisos_trabajo_subq.c.ultima_fecha_permiso_sistema,
             levantamientos_subq.c.documento_levantamiento,
             levantamientos_subq.c.fecha_levantamiento,
             mantenciones_subq.c.documento_mantencion,
             mantenciones_subq.c.fecha_mantencion,
+            mantenciones_terreno_subq.c.cantidad_mantenciones_sistema,
+            mantenciones_terreno_subq.c.ultima_fecha_mantencion_sistema,
             retiros_subq.c.documento_retiro,
             retiros_subq.c.fecha_retiro,
             traslados_subq.c.documento_traslado,
@@ -145,8 +175,11 @@ def listar_actas():
             inventarios_subq.c.documento_inventario
         ).join(Cliente, Cliente.id_cliente == Centro.cliente_id)\
          .outerjoin(instalaciones_subq, instalaciones_subq.c.cid == Centro.id_centro)\
+         .outerjoin(actas_entrega_subq, actas_entrega_subq.c.cid == Centro.id_centro)\
+         .outerjoin(permisos_trabajo_subq, permisos_trabajo_subq.c.cid == Centro.id_centro)\
          .outerjoin(levantamientos_subq, levantamientos_subq.c.cid == Centro.id_centro)\
          .outerjoin(mantenciones_subq, mantenciones_subq.c.cid == Centro.id_centro)\
+         .outerjoin(mantenciones_terreno_subq, mantenciones_terreno_subq.c.cid == Centro.id_centro)\
          .outerjoin(retiros_subq, retiros_subq.c.cid == Centro.id_centro)\
          .outerjoin(traslados_subq, traslados_subq.c.cid == Centro.id_centro)\
          .outerjoin(ceses_subq, ceses_subq.c.cid == Centro.id_centro)\
@@ -168,10 +201,16 @@ def listar_actas():
                 "centro_fecha_termino": row.centro_fecha_termino,
                 "instalacion_fecha": row.fecha_instalacion,
                 "instalacion_documento": row.documento_instalacion,
+                "cantidad_actas_sistema": int(row.cantidad_actas_sistema or 0),
+                "ultima_fecha_acta_sistema": row.ultima_fecha_acta_sistema,
+                "cantidad_permisos_sistema": int(row.cantidad_permisos_sistema or 0),
+                "ultima_fecha_permiso_sistema": row.ultima_fecha_permiso_sistema,
                 "levantamiento_fecha": row.fecha_levantamiento,
                 "levantamiento_documento": row.documento_levantamiento,
                 "mantencion_fecha": row.fecha_mantencion,
                 "mantencion_documento": row.documento_mantencion,
+                "cantidad_mantenciones_sistema": int(row.cantidad_mantenciones_sistema or 0),
+                "ultima_fecha_mantencion_sistema": row.ultima_fecha_mantencion_sistema,
                 "retiro_fecha": row.fecha_retiro,
                 "retiro_documento": row.documento_retiro,
                 "traslado_fecha": row.fecha_traslado,
