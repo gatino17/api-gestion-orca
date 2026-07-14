@@ -292,6 +292,15 @@ def crear_abono():
     return jsonify({"message": "Abono registrado", "abono": _serialize_abono(nuevo)}), 201
 
 
+@rendiciones_blueprint.route("/abonos/<int:id_abono>", methods=["DELETE"])
+@rendiciones_blueprint.route("/abonos/<int:id_abono>/eliminar", methods=["POST"])
+def eliminar_abono(id_abono):
+    item = RendicionAbono.query.get_or_404(id_abono)
+    db.session.delete(item)
+    db.session.commit()
+    return jsonify({"message": "Abono eliminado"}), 200
+
+
 @rendiciones_blueprint.route("/saldos", methods=["GET"])
 def listar_saldos_tecnicos():
     tecnico_user_id = request.args.get("tecnico_user_id", type=int)
