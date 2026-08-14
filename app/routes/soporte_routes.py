@@ -90,7 +90,9 @@ def obtener_soportes():
             "centro": {
                 "id_centro": soporte.centro.id_centro if soporte.centro else None,
                 "nombre": soporte.centro.nombre if soporte.centro else None,
-                "cliente": soporte.centro.cliente.nombre if soporte.centro and soporte.centro.cliente else None          
+                "cliente": soporte.centro.cliente.nombre if soporte.centro and soporte.centro.cliente else None,
+                "ubicacion": soporte.centro.ubicacion if soporte.centro else None,
+                "area": soporte.centro.area if soporte.centro else None
             },
             "problema": soporte.problema,
             "tipo": soporte.tipo,
