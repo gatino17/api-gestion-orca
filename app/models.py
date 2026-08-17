@@ -194,6 +194,7 @@ class Actividad(db.Model):
     
     # Referencias a centros
     centro_id = db.Column(db.Integer, db.ForeignKey('centros.id_centro'))
+    soporte_id = db.Column(db.Integer, db.ForeignKey('soporte.id_soporte', ondelete='SET NULL'), nullable=True, index=True)
     cliente = db.Column(db.String(100))
     estado_del_centro = db.Column(db.String(50))
     
@@ -206,6 +207,7 @@ class Actividad(db.Model):
 
     # Relación con Centro
     centro = db.relationship('Centro', backref='actividades')
+    soporte = db.relationship('Soporte', backref='actividades')
 
     def __repr__(self):
         return f"<Actividad {self.nombre_actividad} en centro {self.centro_id}>"

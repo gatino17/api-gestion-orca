@@ -204,6 +204,15 @@ def create_app():
         _schema_exec(
             text(
                 """
+                ALTER TABLE actividades
+                ADD COLUMN IF NOT EXISTS soporte_id INTEGER REFERENCES soporte(id_soporte) ON DELETE SET NULL
+                """
+            )
+        )
+        _schema_exec(text("CREATE INDEX IF NOT EXISTS ix_actividades_soporte_id ON actividades (soporte_id)"))
+        _schema_exec(
+            text(
+                """
                 ALTER TABLE centros
                 ADD COLUMN IF NOT EXISTS es_central BOOLEAN DEFAULT FALSE
                 """

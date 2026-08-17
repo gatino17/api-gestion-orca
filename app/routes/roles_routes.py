@@ -3,6 +3,7 @@ from flask import Blueprint, jsonify, request
 from ..database import db
 from ..models import Role, RolePage
 from ..permissions import AVAILABLE_PAGES
+from ..socketio_ext import emit_roles_event
 
 
 roles_blueprint = Blueprint("roles", __name__)
@@ -48,6 +49,7 @@ def create_role():
     for key in pages_clean:
         db.session.add(RolePage(role_id=role.id_role, page_key=key))
     db.session.commit()
+    emit_roles_event("roles_updated", {"action": "created", "rol": role.nombre, "paginas": pages_clean})
     return jsonify({"message": "Rol creado", "rol": _serialize_role(role)}), 201
 
 
@@ -79,6 +81,7 @@ def update_role(id_role):
             db.session.add(RolePage(role_id=role.id_role, page_key=key))
 
     db.session.commit()
+    emit_roles_event("roles_updated", {"action": "updated", "rol": role.nombre, "paginas": _serialize_role(role)["paginas"]})
     return jsonify({"message": "Rol actualizado", "rol": _serialize_role(role)}), 200
 
 
@@ -87,6 +90,8 @@ def delete_role(id_role):
     role = Role.query.get(id_role)
     if not role:
         return jsonify({"message": "Rol no encontrado"}), 404
+    role_name = role.nombre
     db.session.delete(role)
     db.session.commit()
+    emit_roles_event("roles_updated", {"action": "deleted", "rol": role_name})
     return jsonify({"message": "Rol eliminado"}), 200

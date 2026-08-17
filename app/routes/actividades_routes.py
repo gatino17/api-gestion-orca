@@ -74,6 +74,7 @@ def _serialize_actividad(actividad):
         "tiempo_en_dar_solucion": actividad.tiempo_en_dar_solucion,
         "estado": actividad.estado,
         "centro_id": actividad.centro_id,
+        "soporte_id": actividad.soporte_id,
         "centro": {
             "id_centro": actividad.centro.id_centro if actividad.centro else None,
             "nombre": actividad.centro.nombre if actividad.centro else None,
@@ -221,7 +222,8 @@ def crear_actividad():
         tecnico_ayudante=tecnico_ayudante,    # ID del ayudante (opcional)
         tiempo_en_dar_solucion=data.get('tiempo_en_dar_solucion'),
         estado=data.get('estado'),
-        centro_id=data.get('centro_id')  # ID del centro (opcional)
+        centro_id=data.get('centro_id'),  # ID del centro (opcional)
+        soporte_id=data.get('soporte_id')
     )
 
     _asignar_tecnicos_relacion(
@@ -240,6 +242,7 @@ def crear_actividad():
         "tecnico_encargado": nueva_actividad.tecnico_encargado,
         "tecnico_ayudante": nueva_actividad.tecnico_ayudante,
         "centro_id": nueva_actividad.centro_id,
+        "soporte_id": nueva_actividad.soporte_id,
     })
     return jsonify({"message": "Actividad creada exitosamente", "id_actividad": nueva_actividad.id_actividad}), 201
 
@@ -323,6 +326,8 @@ def actualizar_actividad(id_actividad):
     actividad.tiempo_en_dar_solucion = data.get('tiempo_en_dar_solucion', actividad.tiempo_en_dar_solucion)
     actividad.estado = data.get('estado', actividad.estado)
     actividad.centro_id = data.get('centro_id', actividad.centro_id)
+    if 'soporte_id' in data:
+        actividad.soporte_id = data.get('soporte_id')
 
     _asignar_tecnicos_relacion(
         actividad,
@@ -342,6 +347,7 @@ def actualizar_actividad(id_actividad):
         "tecnico_encargado": actividad.tecnico_encargado,
         "tecnico_ayudante": actividad.tecnico_ayudante,
         "centro_id": actividad.centro_id,
+        "soporte_id": actividad.soporte_id,
     })
     return jsonify({"message": "Actividad actualizada exitosamente"}), 200
 

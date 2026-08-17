@@ -61,6 +61,35 @@ def login():
     return jsonify({'message': 'Login successful', 'token': token}), 200
 
 
+@auth_blueprint.route('/refresh-token', methods=['GET'])
+def refresh_token():
+    token = request.headers.get('Authorization')
+    if not token:
+        return jsonify({'message': 'Token is missing'}), 401
+
+    try:
+        decoded_token = jwt.decode(token.split("Bearer ")[1], SECRET_KEY, algorithms=['HS256'])
+        user = User.query.get(decoded_token['user_id'])
+        if not user:
+            return jsonify({'message': 'Invalid token'}), 401
+
+        refreshed = jwt.encode(
+            {
+                'user_id': user.id,
+                'name': user.name,
+                'rol': user.rol,
+                'paginas': get_pages_for_role_name(user.rol),
+                'supervisor_areas': _parse_supervisor_areas(user),
+                'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=TOKEN_EXP_HOURS),
+            },
+            SECRET_KEY,
+            algorithm='HS256',
+        )
+        return jsonify({'message': 'Token refreshed', 'token': refreshed}), 200
+    except Exception as e:
+        return jsonify({'message': 'Token is invalid or expired', 'error': str(e)}), 401
+
+
 @auth_blueprint.route('/protected', methods=['GET'])
 def protected_route():
     token = request.headers.get('Authorization')

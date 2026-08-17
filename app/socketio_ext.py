@@ -27,3 +27,19 @@ def emit_actividad_event(event_name, payload):
         socketio.emit(event_name, payload or {})
     except Exception:
         pass
+
+
+def emit_soporte_event(event_name, payload):
+    """Emite eventos de soporte sin romper flujo HTTP si Socket.IO falla."""
+    try:
+        socketio.emit(event_name, payload or {})
+    except Exception:
+        pass
+
+
+def emit_roles_event(event_name, payload):
+    """Emite eventos de roles/permisos sin romper flujo HTTP si Socket.IO falla."""
+    try:
+        socketio.emit(event_name, payload or {})
+    except Exception:
+        pass

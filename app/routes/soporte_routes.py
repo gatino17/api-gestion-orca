@@ -3,6 +3,7 @@ from datetime import datetime
 from flask import Blueprint, request, jsonify
 from ..models import Soporte, Centro, Ismael, SoporteCaseTomado
 from ..database import db
+from ..socketio_ext import emit_soporte_event
 
 soporte_blueprint = Blueprint('soporte', __name__)
 
@@ -76,6 +77,12 @@ def crear_soporte():
     db.session.add(nuevo_soporte)
     _registrar_case_tomado(nuevo_soporte.case_code, nuevo_soporte.ismael_id_origen)
     db.session.commit()
+    emit_soporte_event("soporte_updated", {
+        "action": "created",
+        "id_soporte": nuevo_soporte.id_soporte,
+        "estado": nuevo_soporte.estado,
+        "centro_id": nuevo_soporte.centro_id,
+    })
 
     return jsonify({"message": "Soporte creado exitosamente", "id_soporte": nuevo_soporte.id_soporte}), 201
 
@@ -203,15 +210,28 @@ def actualizar_soporte(id_soporte):
         soporte.fecha_cierre = _parse_date(data.get('fecha_cierre'))
 
     db.session.commit()
+    emit_soporte_event("soporte_updated", {
+        "action": "updated",
+        "id_soporte": soporte.id_soporte,
+        "estado": soporte.estado,
+        "centro_id": soporte.centro_id,
+    })
     return jsonify({"message": "Soporte actualizado exitosamente"}), 200
 
 # Eliminar un registro de soporte
 @soporte_blueprint.route('/<int:id_soporte>', methods=['DELETE'])
 def eliminar_soporte(id_soporte):
     soporte = Soporte.query.get_or_404(id_soporte)
+    payload = {
+        "action": "deleted",
+        "id_soporte": soporte.id_soporte,
+        "estado": soporte.estado,
+        "centro_id": soporte.centro_id,
+    }
     _registrar_case_tomado(soporte.case_code, soporte.ismael_id_origen)
     db.session.delete(soporte)
     db.session.commit()
+    emit_soporte_event("soporte_updated", payload)
     return jsonify({"message": "Soporte eliminado exitosamente"}), 200
 
 
