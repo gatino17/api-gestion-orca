@@ -45,6 +45,14 @@ def _parse_date(value):
         return value
     return datetime.strptime(str(value), "%Y-%m-%d").date()
 
+
+def _iso_value(value):
+    return value.isoformat() if value else None
+
+
+def _get_datetime_attr(obj, attr):
+    return getattr(obj, attr, None)
+
 # Crear un nuevo registro de soporte
 @soporte_blueprint.route('/', methods=['POST'])
 def crear_soporte():
@@ -82,8 +90,8 @@ def crear_soporte():
         "id_soporte": nuevo_soporte.id_soporte,
         "estado": nuevo_soporte.estado,
         "centro_id": nuevo_soporte.centro_id,
-        "created_at": nuevo_soporte.created_at.isoformat() if nuevo_soporte.created_at else None,
-        "updated_at": nuevo_soporte.updated_at.isoformat() if nuevo_soporte.updated_at else None,
+        "created_at": _iso_value(_get_datetime_attr(nuevo_soporte, "created_at")),
+        "updated_at": _iso_value(_get_datetime_attr(nuevo_soporte, "updated_at")),
     })
 
     return jsonify({"message": "Soporte creado exitosamente", "id_soporte": nuevo_soporte.id_soporte}), 201
@@ -105,7 +113,7 @@ def obtener_soportes():
             },
             "problema": soporte.problema,
             "tipo": soporte.tipo,
-            "fecha_soporte": soporte.fecha_soporte.isoformat() if soporte.fecha_soporte else None,
+            "fecha_soporte": _iso_value(soporte.fecha_soporte),
             "solucion": soporte.solucion,
             "categoria_falla": soporte.categoria_falla,
             "subcategoria_falla": soporte.subcategoria_falla,
@@ -114,11 +122,11 @@ def obtener_soportes():
             "equipo_cambiado": soporte.equipo_cambiado,
             "origen": soporte.origen or "cliente",
             "estado": soporte.estado,
-            "fecha_cierre": soporte.fecha_cierre.isoformat() if soporte.fecha_cierre else None,
+            "fecha_cierre": _iso_value(soporte.fecha_cierre),
             "case_code": soporte.case_code,
             "ismael_id_origen": soporte.ismael_id_origen,
-            "created_at": soporte.created_at.isoformat() if soporte.created_at else None,
-            "updated_at": soporte.updated_at.isoformat() if soporte.updated_at else None
+            "created_at": _iso_value(_get_datetime_attr(soporte, "created_at")),
+            "updated_at": _iso_value(_get_datetime_attr(soporte, "updated_at"))
         })
 
     return jsonify(resultado), 200
@@ -219,8 +227,8 @@ def actualizar_soporte(id_soporte):
         "id_soporte": soporte.id_soporte,
         "estado": soporte.estado,
         "centro_id": soporte.centro_id,
-        "created_at": soporte.created_at.isoformat() if soporte.created_at else None,
-        "updated_at": soporte.updated_at.isoformat() if soporte.updated_at else None,
+        "created_at": _iso_value(_get_datetime_attr(soporte, "created_at")),
+        "updated_at": _iso_value(_get_datetime_attr(soporte, "updated_at")),
     })
     return jsonify({"message": "Soporte actualizado exitosamente"}), 200
 
