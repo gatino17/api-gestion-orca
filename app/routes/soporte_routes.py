@@ -82,6 +82,8 @@ def crear_soporte():
         "id_soporte": nuevo_soporte.id_soporte,
         "estado": nuevo_soporte.estado,
         "centro_id": nuevo_soporte.centro_id,
+        "created_at": nuevo_soporte.created_at.isoformat() if nuevo_soporte.created_at else None,
+        "updated_at": nuevo_soporte.updated_at.isoformat() if nuevo_soporte.updated_at else None,
     })
 
     return jsonify({"message": "Soporte creado exitosamente", "id_soporte": nuevo_soporte.id_soporte}), 201
@@ -114,7 +116,9 @@ def obtener_soportes():
             "estado": soporte.estado,
             "fecha_cierre": soporte.fecha_cierre.isoformat() if soporte.fecha_cierre else None,
             "case_code": soporte.case_code,
-            "ismael_id_origen": soporte.ismael_id_origen
+            "ismael_id_origen": soporte.ismael_id_origen,
+            "created_at": soporte.created_at.isoformat() if soporte.created_at else None,
+            "updated_at": soporte.updated_at.isoformat() if soporte.updated_at else None
         })
 
     return jsonify(resultado), 200
@@ -215,6 +219,8 @@ def actualizar_soporte(id_soporte):
         "id_soporte": soporte.id_soporte,
         "estado": soporte.estado,
         "centro_id": soporte.centro_id,
+        "created_at": soporte.created_at.isoformat() if soporte.created_at else None,
+        "updated_at": soporte.updated_at.isoformat() if soporte.updated_at else None,
     })
     return jsonify({"message": "Soporte actualizado exitosamente"}), 200
 
