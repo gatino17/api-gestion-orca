@@ -15,6 +15,7 @@ AVAILABLE_PAGES = [
     {"key": "calendario", "label": "Calendario", "route": "/calendario"},
     {"key": "historial_trabajos", "label": "Historial de trabajos", "route": "/historial-trabajos"},
     {"key": "historial_centro", "label": "Historial por centro", "route": "/historial-centro"},
+    {"key": "asistente_operativo", "label": "Asistente operativo", "route": "/asistente-operativo"},
     {"key": "datos_ip", "label": "Datos IP", "route": "/datos-ip"},
     {"key": "clientes", "label": "Clientes", "route": "/clientes"},
     {"key": "centros", "label": "Centros", "route": "/centros"},
