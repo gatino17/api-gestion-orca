@@ -15,6 +15,7 @@ from sqlalchemy.orm import joinedload
 armados_blueprint = Blueprint('armados', __name__)
 SECRET_KEY = "remoto753524"
 EQUIPOS_MIGRADOS_A_MATERIALES = {"bandeja rack - tornillos"}
+EQUIPOS_POR_CANTIDAD = {"mouse", "teclado"}
 SINONIMOS_EQUIPOS = {
     "ip pc": "pc",
     "ip pc nvr": "pc",
@@ -242,27 +243,65 @@ def equipo_migrado_a_material(nombre):
     return normalizar_nombre_equipo(nombre) in EQUIPOS_MIGRADOS_A_MATERIALES
 
 
-def construir_resumen_armado_equipos_desde_lista(equipos):
-    equipos = [e for e in (equipos or []) if not equipo_migrado_a_material(e.nombre)]
+def equipo_por_cantidad(nombre):
+    return normalizar_nombre_equipo(nombre) in EQUIPOS_POR_CANTIDAD
+
+
+def cantidad_material_valida(material):
+    try:
+        return int(float(getattr(material, "cantidad", 0) or 0)) > 0
+    except (TypeError, ValueError):
+        return False
+
+
+def construir_resumen_armado_equipos_desde_lista(equipos, materiales=None):
+    equipos = [
+        e for e in (equipos or [])
+        if not equipo_migrado_a_material(e.nombre)
+        and not equipo_por_cantidad(e.nombre)
+    ]
+    materiales_por_nombre = {
+        normalizar_nombre_equipo(m.nombre): m
+        for m in (materiales or [])
+        if normalizar_nombre_equipo(m.nombre)
+    }
     mapa = {normalizar_nombre_equipo(e.nombre): e for e in equipos}
     predef_norm = {normalizar_nombre_equipo(nombre) for nombre in EQUIPOS_PREDEF}
 
     base = []
     for nombre in EQUIPOS_PREDEF:
-        found = mapa.get(normalizar_nombre_equipo(nombre))
+        key = normalizar_nombre_equipo(nombre)
+        found = materiales_por_nombre.get(key) if key in EQUIPOS_POR_CANTIDAD else mapa.get(key)
         base.append(found)
 
     extras = [e for e in equipos if normalizar_nombre_equipo(e.nombre) not in predef_norm]
     resumen = [e for e in [*base, *extras] if e is not None]
     total = len(EQUIPOS_PREDEF) + len(extras)
-    con_serie = len([e for e in resumen if str(e.numero_serie or "").strip()])
-    no_aplica = len([e for e in resumen if normalizar_estado_registro_equipo(e.estado_registro) == "no_aplica"])
-    pendientes = len([e for e in resumen if normalizar_estado_registro_equipo(e.estado_registro) == "pendiente"])
-    resueltos = con_serie + no_aplica
+    con_serie = 0
+    con_cantidad = 0
+    no_aplica = 0
+    pendientes = 0
+    for item in resumen:
+        nombre = normalizar_nombre_equipo(getattr(item, "nombre", ""))
+        es_cantidad = nombre in EQUIPOS_POR_CANTIDAD
+        estado = normalizar_estado_registro_material(getattr(item, "estado_registro", None)) if es_cantidad else normalizar_estado_registro_equipo(getattr(item, "estado_registro", None))
+        if estado == "no_aplica":
+            no_aplica += 1
+            continue
+        if estado == "pendiente":
+            pendientes += 1
+            continue
+        if es_cantidad:
+            if cantidad_material_valida(item):
+                con_cantidad += 1
+        elif str(getattr(item, "numero_serie", "") or "").strip():
+            con_serie += 1
+    resueltos = con_serie + con_cantidad + no_aplica
     porcentaje = round((resueltos / total) * 100) if total else 0
     return {
         "total": total,
         "con_serie": con_serie,
+        "con_cantidad": con_cantidad,
         "no_aplica": no_aplica,
         "pendientes": pendientes,
         "resueltos": resueltos,
@@ -275,10 +314,11 @@ def calcular_resumen_armado_equipos(centro_id):
     return construir_resumen_armado_equipos_desde_lista(equipos)
 
 
-def construir_detalle_pendientes_armado_desde_lista(equipos):
+def construir_detalle_pendientes_armado_desde_lista(equipos, materiales=None):
     equipos = [
         e for e in (equipos or [])
         if not equipo_migrado_a_material(e.nombre)
+        and not equipo_por_cantidad(e.nombre)
         and normalizar_estado_registro_equipo(e.estado_registro) == "pendiente"
     ]
     items = [
@@ -289,6 +329,16 @@ def construir_detalle_pendientes_armado_desde_lista(equipos):
         }
         for e in equipos
     ]
+    items.extend(
+        {
+            "tipo": "material",
+            "nombre": str(m.nombre or "").strip() or "Material",
+            "observacion": str(m.observacion_registro or "").strip()
+        }
+        for m in (materiales or [])
+        if equipo_por_cantidad(m.nombre)
+        and normalizar_estado_registro_material(m.estado_registro) == "pendiente"
+    )
     nombres = [item["nombre"] for item in items if item.get("nombre")]
     if not nombres:
         resumen = ""
@@ -509,8 +559,9 @@ def listar_armados():
             })
 
         equipos_centro = equipos_por_centro.get(centro_id_actual, [])
-        resumen_armado = construir_resumen_armado_equipos_desde_lista(equipos_centro)
-        detalle_pendientes = construir_detalle_pendientes_armado_desde_lista(equipos_centro)
+        materiales_armado = materiales_por_armado.get(armado_id, [])
+        resumen_armado = construir_resumen_armado_equipos_desde_lista(equipos_centro, materiales_armado)
+        detalle_pendientes = construir_detalle_pendientes_armado_desde_lista(equipos_centro, materiales_armado)
 
         cajas_equipos = [e.caja for e in equipos_centro]
         cajas_materiales = [m.caja for m in materiales_por_armado.get(armado_id, [])]
