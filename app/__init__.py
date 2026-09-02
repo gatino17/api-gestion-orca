@@ -408,6 +408,14 @@ def create_app():
         _schema_exec(
             text(
                 """
+                ALTER TABLE soporte
+                ADD COLUMN IF NOT EXISTS prioridad VARCHAR(20) DEFAULT 'media'
+                """
+            )
+        )
+        _schema_exec(
+            text(
+                """
                 ALTER TABLE users
                 ADD COLUMN IF NOT EXISTS supervisor_areas TEXT
                 """

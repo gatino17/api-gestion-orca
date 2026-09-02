@@ -426,6 +426,7 @@ class Soporte(db.Model):
     cambio_equipo = db.Column(db.Boolean, default=False)
     equipo_cambiado = db.Column(db.String(100), nullable=True)
     origen = db.Column(db.String(20), nullable=False, default='cliente')  # 'cliente' | 'orca'
+    prioridad = db.Column(db.String(20), nullable=False, default='media')  # 'alta' | 'media' | 'baja'
     estado = db.Column(db.String(20), default='pendiente')  # <---
     fecha_cierre = db.Column(db.Date, nullable=True)  
     case_code = db.Column(db.String(120), nullable=True)
@@ -439,7 +440,7 @@ class Soporte(db.Model):
             f"<Soporte(id_soporte={self.id_soporte}, centro_id={self.centro_id}, problema='{self.problema}', "
             f"tipo='{self.tipo}', fecha_soporte={self.fecha_soporte}, solucion='{self.solucion}', "
             f"categoria_falla='{self.categoria_falla}', subcategoria_falla='{self.subcategoria_falla}', permiso_trabajo={self.permiso_trabajo}, cambio_equipo={self.cambio_equipo}, "
-            f"equipo_cambiado='{self.equipo_cambiado}', origen='{self.origen}', estado='{self.estado}', fecha_cierre={self.fecha_cierre})>"
+            f"equipo_cambiado='{self.equipo_cambiado}', origen='{self.origen}', prioridad='{self.prioridad}', estado='{self.estado}', fecha_cierre={self.fecha_cierre})>"
         )
 
 

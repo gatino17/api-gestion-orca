@@ -60,6 +60,9 @@ def crear_soporte():
     origen = str(data.get('origen', 'cliente')).lower().strip()
     if origen not in ('cliente', 'orca'):
         return jsonify({"error": "Origen invalido. Use 'cliente' u 'orca'."}), 400
+    prioridad = str(data.get('prioridad', 'media')).lower().strip()
+    if prioridad not in ('alta', 'media', 'baja'):
+        return jsonify({"error": "Prioridad invalida. Use 'alta', 'media' o 'baja'."}), 400
     ismael_id_origen = data.get('ismael_id_origen')
     if _ismael_id_ya_tomado(ismael_id_origen):
         return jsonify({"error": "Este caso de ismael ya fue tomado para soporte."}), 409
@@ -76,6 +79,7 @@ def crear_soporte():
         cambio_equipo=data.get('cambio_equipo', False),
         equipo_cambiado=data.get('equipo_cambiado'),
         origen=origen,
+        prioridad=prioridad,
         estado=data.get('estado', 'pendiente'),
         fecha_cierre=_parse_date(data.get('fecha_cierre')),
         case_code=data.get('case_code'),
@@ -121,6 +125,7 @@ def obtener_soportes():
             "cambio_equipo": soporte.cambio_equipo,
             "equipo_cambiado": soporte.equipo_cambiado,
             "origen": soporte.origen or "cliente",
+            "prioridad": soporte.prioridad or "media",
             "estado": soporte.estado,
             "fecha_cierre": _iso_value(soporte.fecha_cierre),
             "case_code": soporte.case_code,
@@ -212,6 +217,11 @@ def actualizar_soporte(id_soporte):
         if origen not in ('cliente', 'orca'):
             return jsonify({"error": "Origen invalido. Use 'cliente' u 'orca'."}), 400
         soporte.origen = origen
+    if 'prioridad' in data:
+        prioridad = str(data.get('prioridad', 'media')).lower().strip()
+        if prioridad not in ('alta', 'media', 'baja'):
+            return jsonify({"error": "Prioridad invalida. Use 'alta', 'media' o 'baja'."}), 400
+        soporte.prioridad = prioridad
     soporte.estado = data.get('estado', soporte.estado)
     if 'case_code' in data:
         soporte.case_code = data.get('case_code')
