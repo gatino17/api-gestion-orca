@@ -15,7 +15,14 @@ from sqlalchemy.orm import joinedload
 armados_blueprint = Blueprint('armados', __name__)
 SECRET_KEY = "remoto753524"
 EQUIPOS_MIGRADOS_A_MATERIALES = {"bandeja rack - tornillos"}
-EQUIPOS_POR_CANTIDAD = {"mouse", "teclado"}
+EQUIPOS_POR_CANTIDAD = {
+    "mouse",
+    "teclado",
+    "parlantes",
+    "sensor magnetico",
+    "sensor magnetico respaldo",
+    "sensor magnetico cargador",
+}
 SINONIMOS_EQUIPOS = {
     "ip pc": "pc",
     "ip pc nvr": "pc",
