@@ -5,6 +5,7 @@ from ..database import db
 from ..socketio_ext import emit_armado_event
 from datetime import datetime
 from collections import defaultdict
+from types import SimpleNamespace
 import unicodedata
 import jwt
 import re
@@ -22,6 +23,12 @@ EQUIPOS_POR_CANTIDAD = {
     "sensor magnetico",
     "sensor magnetico respaldo",
     "sensor magnetico cargador",
+    "baliza interior",
+    "bocina interior",
+    "baliza exterior",
+    "bocina exterior",
+    "foco led 150w",
+    "foco led 50w",
 }
 SINONIMOS_EQUIPOS = {
     "ip pc": "pc",
@@ -31,6 +38,14 @@ SINONIMOS_EQUIPOS = {
     "mastil": "mastil",
     "switch cisco + adaptador": "switch (cisco)",
     "switch cisco": "switch (cisco)",
+    "baliza exterior 1": "baliza exterior",
+    "baliza exterior 2": "baliza exterior",
+    "bocina exterior 1": "bocina exterior",
+    "bocina exterior 2": "bocina exterior",
+    "foco led 1 150w": "foco led 150w",
+    "foco led 2 150w": "foco led 150w",
+    "foco led 1 50w": "foco led 50w",
+    "foco led 2 50w": "foco led 50w",
 }
 EQUIPOS_PREDEF = [
     "PC",
@@ -72,14 +87,10 @@ EQUIPOS_PREDEF = [
     "Tablero 500x400x200",
     "Baliza Interior",
     "Bocina Interior",
-    "Baliza Exterior 1",
-    "Baliza Exterior 2",
-    "Bocina Exterior 1",
-    "Bocina Exterior 2",
-    "Foco led 1 150W",
-    "Foco led 2 150W",
-    "Foco led 1 50W",
-    "Foco led 2 50W",
+    "Baliza Exterior",
+    "Bocina Exterior",
+    "Foco led 150W",
+    "Foco led 50W",
     "Fuente poder 12V",
     "Axis P8221",
     "Tablero Derivacion (400x300x200)",
@@ -129,14 +140,26 @@ def normalizar_texto(valor):
 
 
 def normalizar_nombre_material(nombre):
-    return normalizar_texto(nombre).replace("mesa rack", "mesa respaldo")
+    valor = normalizar_texto(nombre).replace("mesa rack", "mesa respaldo")
+    return SINONIMOS_EQUIPOS.get(valor, valor)
 
 
 def canonizar_nombre_material(nombre):
     texto = (nombre or "").strip()
     if not texto:
         return ""
-    return "Mesa respaldo" if normalizar_nombre_material(texto) == "mesa respaldo" else texto
+    normalizado = normalizar_nombre_material(texto)
+    if normalizado == "mesa respaldo":
+        return "Mesa respaldo"
+    if normalizado == "baliza exterior":
+        return "Baliza Exterior"
+    if normalizado == "bocina exterior":
+        return "Bocina Exterior"
+    if normalizado == "foco led 150w":
+        return "Foco led 150W"
+    if normalizado == "foco led 50w":
+        return "Foco led 50W"
+    return texto
 
 
 def normalizar_modalidad_salida(valor):
@@ -267,11 +290,22 @@ def construir_resumen_armado_equipos_desde_lista(equipos, materiales=None):
         if not equipo_migrado_a_material(e.nombre)
         and not equipo_por_cantidad(e.nombre)
     ]
-    materiales_por_nombre = {
-        normalizar_nombre_equipo(m.nombre): m
-        for m in (materiales or [])
-        if normalizar_nombre_equipo(m.nombre)
-    }
+    materiales_por_nombre = {}
+    for material in (materiales or []):
+        key = normalizar_nombre_equipo(material.nombre)
+        if not key:
+            continue
+        if key not in materiales_por_nombre:
+            materiales_por_nombre[key] = SimpleNamespace(
+                nombre=canonizar_nombre_material(material.nombre),
+                cantidad=float(getattr(material, "cantidad", 0) or 0),
+                estado_registro=getattr(material, "estado_registro", None)
+            )
+            continue
+        acumulado = materiales_por_nombre[key]
+        acumulado.cantidad = float(acumulado.cantidad or 0) + float(getattr(material, "cantidad", 0) or 0)
+        if normalizar_estado_registro_material(getattr(material, "estado_registro", None)) == "pendiente":
+            acumulado.estado_registro = "pendiente"
     mapa = {normalizar_nombre_equipo(e.nombre): e for e in equipos}
     predef_norm = {normalizar_nombre_equipo(nombre) for nombre in EQUIPOS_PREDEF}
 
@@ -981,7 +1015,11 @@ def guardar_materiales(id_armado):
 
     Armado.query.get_or_404(id_armado)
     existentes = ArmadoMaterial.query.filter_by(armado_id=id_armado).all()
-    por_nombre = {normalizar_nombre_material(m.nombre): m for m in existentes if normalizar_nombre_material(m.nombre)}
+    por_nombre = defaultdict(list)
+    for material in existentes:
+        key_existente = normalizar_nombre_material(material.nombre)
+        if key_existente:
+            por_nombre[key_existente].append(material)
     cambios = 0
 
     for item in payload:
@@ -1009,10 +1047,15 @@ def guardar_materiales(id_armado):
                 actual = None
 
         if actual is None:
-            actual = por_nombre.get(key)
+            coincidencias = por_nombre.get(key) or []
+            actual = coincidencias[0] if coincidencias else None
 
         if actual:
-            cant_actual = float(actual.cantidad or 0)
+            duplicados = [
+                material for material in (por_nombre.get(key) or [])
+                if material.id_material != actual.id_material
+            ]
+            cant_actual = float(actual.cantidad or 0) + sum(float(material.cantidad or 0) for material in duplicados)
             caja_actual = actual.caja or 'Caja 1'
             if actual.nombre != nombre:
                 actual.nombre = nombre
@@ -1020,6 +1063,8 @@ def guardar_materiales(id_armado):
                 if cantidad_delta == 0:
                     continue
                 actual.cantidad = cant_actual + cantidad_delta
+                for duplicado in duplicados:
+                    db.session.delete(duplicado)
                 if caja_tecnico_id is not None:
                     actual.caja_tecnico_id = caja_tecnico_id
                 actual.estado_registro = estado_registro
@@ -1043,7 +1088,8 @@ def guardar_materiales(id_armado):
                 (cant_actual != cantidad) or
                 (caja_actual != caja) or
                 (normalizar_estado_registro_material(actual.estado_registro) != estado_registro) or
-                ((actual.observacion_registro or None) != (observacion_registro if estado_registro == "pendiente" else None))
+                ((actual.observacion_registro or None) != (observacion_registro if estado_registro == "pendiente" else None)) or
+                bool(duplicados)
             )
             if not cambio:
                 continue
@@ -1052,6 +1098,8 @@ def guardar_materiales(id_armado):
             actual.caja = caja
             actual.estado_registro = estado_registro
             actual.observacion_registro = observacion_registro if estado_registro == "pendiente" else None
+            for duplicado in duplicados:
+                db.session.delete(duplicado)
             if caja_tecnico_id is not None:
                 actual.caja_tecnico_id = caja_tecnico_id
 
