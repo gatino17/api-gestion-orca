@@ -4,7 +4,8 @@ from datetime import datetime
 from decimal import Decimal
 from werkzeug.utils import secure_filename
 import jwt
-from ..models import Inventario, Centro, BodegaInventarioEquipo, User, db
+from sqlalchemy import or_
+from ..models import Inventario, Centro, BodegaInventarioEquipo, BodegaInventarioToma, BodegaInventarioEscaneo, User, db
 
 # Crear el blueprint
 inventarios_blueprint = Blueprint('inventarios', __name__)
@@ -13,6 +14,53 @@ SECRET_KEY = "remoto753524"
 # Configuración para archivos
 ALLOWED_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.pdf'}
 UPLOAD_FOLDER = os.path.join(os.getcwd(), 'uploads/inventarios_docs')
+
+CATALOGO_INVENTARIO_GRUPOS = [
+    {
+        "categoria": "Oficina",
+        "items": [
+            "PC", "Monitor", "Mouse", "Teclado", "Router", "Switch", "Switch (Cisco)",
+            "Switch raqueable", "Camara Interior", "Parlantes", "Sensor Magnetico",
+            "Rack 9U - tuercas - tornillos", "Zapatilla Rack (PDU)",
+        ],
+    },
+    {"categoria": "Base tierra", "items": ["PC cliente", "Rack 2", "Ubiquiti TX", "Ubiquiti RX", "Pantalla"]},
+    {
+        "categoria": "Tablero Alarma",
+        "items": [
+            "Tablero 500x400x200", "Baliza Interior", "Bocina Interior", "Baliza Exterior",
+            "Bocina Exterior", "Foco led 150W", "Foco led 50W", "Fuente poder 12V", "Axis P8221",
+        ],
+    },
+    {
+        "categoria": "Tablero Respaldo",
+        "items": [
+            "Tablero 1200x800x300", "Tablero 1000x600x300", "Inversor cargador Victron",
+            "Panel Victron", "Bateria 1", "Bateria 2", "Bateria 3", "Bateria 4", "Bateria 5",
+            "Bateria 6", "Switch POE", "Sensor magnetico respaldo", "Sensor magnetico cargador",
+            "Cargador 1", "Cargador 2", "Tablero Cargador 750x500x250", "UPS online",
+        ],
+    },
+    {
+        "categoria": "Mastil",
+        "items": [
+            "Tablero Derivacion (400x300x200)", "Radar 1", "Radar 2", "Cable rj radar 1",
+            "Cable rj radar 2", "Soporte radar 1", "Soporte radar 2", "Camara PTZ termal",
+            "Camara PTZ Laser", "Camara PTZ Laser 2", "Camara Modulo", "Camara Silo 1",
+            "Camara Silo 2", "Camara Ensinerador", "Ensilaje interior", "Ensilaje exterior",
+            "Camara Popa", "Camara acceso 1", "Camara acceso 2", "Camara acceso 3",
+            "Camara acceso 4", "Enlace Ubiquiti",
+        ],
+    },
+    {
+        "categoria": "Tablero Camara",
+        "items": [
+            "Tablero Camara (500x700x250)", "Poe Power 1", "Poe Power 2", "Poe Power 3",
+            "Poe Power 4", "Poe Power 5", "Switch POE 1", "Switch POE 2", "Mass",
+            "Tablero 750x500x250", "Switch 1", "Switch 2", "Switch 3", "Switch 4", "Netio",
+        ],
+    },
+]
 
 # Crear el directorio de uploads si no existe
 if not os.path.exists(UPLOAD_FOLDER):
@@ -57,6 +105,142 @@ def _serialize_bodega_equipo(item: BodegaInventarioEquipo):
     }
 
 
+def _normalizar_busqueda(valor):
+    return str(valor or "").strip().lower()
+
+
+def _normalizar_tipo_equipo(valor):
+    return str(valor or "").strip()
+
+
+def _equipos_esperados_bodega(tipo_equipo=None):
+    query = (
+        BodegaInventarioEquipo.query
+        .filter(
+            or_(
+                BodegaInventarioEquipo.estado_asignacion.is_(None),
+                db.func.lower(BodegaInventarioEquipo.estado_asignacion) != "asignado_tecnico"
+            )
+        )
+    )
+    tipo = _normalizar_tipo_equipo(tipo_equipo)
+    if tipo:
+        query = query.filter(db.func.lower(BodegaInventarioEquipo.equipo_nombre) == tipo.lower())
+    return query.order_by(BodegaInventarioEquipo.equipo_nombre.asc(), BodegaInventarioEquipo.codigo.asc()).all()
+
+
+def _buscar_equipo_bodega(valor):
+    valor = str(valor or "").strip()
+    if not valor:
+        return None
+    valor_norm = valor.lower()
+    return (
+        BodegaInventarioEquipo.query
+        .filter(
+            or_(
+                db.func.lower(BodegaInventarioEquipo.codigo) == valor_norm,
+                db.func.lower(BodegaInventarioEquipo.numero_serie) == valor_norm
+            )
+        )
+        .first()
+    )
+
+
+def _serialize_bodega_toma_escaneo(item: BodegaInventarioEscaneo):
+    return {
+        "id_escaneo": item.id_escaneo,
+        "toma_id": item.toma_id,
+        "bodega_equipo_id": item.bodega_equipo_id,
+        "codigo": item.codigo,
+        "numero_serie": item.numero_serie,
+        "equipo_nombre": item.equipo_nombre,
+        "categoria_seleccionada": item.categoria_seleccionada,
+        "tipo_seleccionado": item.tipo_seleccionado,
+        "ubicacion_sistema": item.ubicacion_sistema,
+        "estado_sistema": item.estado_sistema,
+        "resultado": item.resultado,
+        "escaneado_por_id": item.escaneado_por_id,
+        "escaneado_por_nombre": item.escaneado_por_nombre,
+        "observacion": item.observacion,
+        "created_at": item.created_at.isoformat() if item.created_at else None,
+    }
+
+
+def _escaneo_pertenece_tipo(item, tipo_equipo):
+    tipo = _normalizar_tipo_equipo(tipo_equipo)
+    if not tipo:
+        return True
+    return (
+        str(item.tipo_seleccionado or "").strip().lower() == tipo.lower()
+        or str(item.equipo_nombre or "").strip().lower() == tipo.lower()
+    )
+
+
+def _resumen_bodega_toma(toma: BodegaInventarioToma, include_detalle=False, tipo_equipo=None):
+    esperados = _equipos_esperados_bodega(tipo_equipo=tipo_equipo)
+    esperados_ids = {item.id_bodega_equipo for item in esperados}
+    escaneos = [
+        item for item in list(toma.escaneos or [])
+        if _escaneo_pertenece_tipo(item, tipo_equipo)
+    ]
+    encontrados_ids = {
+        item.bodega_equipo_id for item in escaneos
+        if item.bodega_equipo_id and item.bodega_equipo_id in esperados_ids and item.resultado in {"encontrado", "duplicado"}
+    }
+    manuales = [item for item in escaneos if item.resultado == "manual"]
+    faltantes = [item for item in esperados if item.id_bodega_equipo not in encontrados_ids]
+    no_esperados = [item for item in escaneos if item.resultado == "no_esperado"]
+    duplicados = [item for item in escaneos if item.resultado == "duplicado"]
+    no_corresponden = [item for item in escaneos if item.resultado == "no_corresponde"]
+    total_esperado = len(esperados)
+    porcentaje = round((len(encontrados_ids) / total_esperado) * 100, 1) if total_esperado else 0
+    resumen = {
+        "total_esperado": total_esperado,
+        "total_escaneos": len(escaneos),
+        "encontrados": len(encontrados_ids) + len(manuales),
+        "manuales": len(manuales),
+        "faltantes": len(faltantes),
+        "no_esperados": len(no_esperados),
+        "duplicados": len(duplicados),
+        "no_corresponden": len(no_corresponden),
+        "cumplimiento": porcentaje,
+    }
+    if include_detalle:
+        resumen["faltantes_detalle"] = [_serialize_bodega_equipo(item) for item in faltantes]
+        resumen["no_esperados_detalle"] = [_serialize_bodega_toma_escaneo(item) for item in no_esperados]
+        resumen["duplicados_detalle"] = [_serialize_bodega_toma_escaneo(item) for item in duplicados]
+        resumen["no_corresponden_detalle"] = [_serialize_bodega_toma_escaneo(item) for item in no_corresponden]
+        resumen["manuales_detalle"] = [_serialize_bodega_toma_escaneo(item) for item in manuales]
+    return resumen
+
+
+def _serialize_bodega_toma(item: BodegaInventarioToma, include_detalle=False, tipo_equipo=None):
+    data = {
+        "id_toma": item.id_toma,
+        "nombre": item.nombre,
+        "ubicacion": item.ubicacion,
+        "estado": item.estado,
+        "responsable_id": item.responsable_id,
+        "responsable_nombre": item.responsable_nombre,
+        "fecha_inicio": item.fecha_inicio.isoformat() if item.fecha_inicio else None,
+        "fecha_cierre": item.fecha_cierre.isoformat() if item.fecha_cierre else None,
+        "observacion": item.observacion,
+        "created_at": item.created_at.isoformat() if item.created_at else None,
+        "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+        "resumen": _resumen_bodega_toma(item, include_detalle=include_detalle, tipo_equipo=tipo_equipo),
+    }
+    if include_detalle:
+        escaneos = [
+            escaneo for escaneo in list(item.escaneos or [])
+            if _escaneo_pertenece_tipo(escaneo, tipo_equipo)
+        ]
+        data["escaneos"] = [
+            _serialize_bodega_toma_escaneo(escaneo)
+            for escaneo in sorted(escaneos, key=lambda x: x.created_at or datetime.min, reverse=True)
+        ]
+    return data
+
+
 def _usuario_actual_desde_token():
     token = request.headers.get("Authorization") or ""
     if not token.startswith("Bearer "):
@@ -71,6 +255,216 @@ def _usuario_actual_desde_token():
         return User.query.get(user_id)
     except Exception:
         return None
+
+
+@inventarios_blueprint.route('/bodega_tomas', methods=['GET'])
+def listar_bodega_tomas():
+    try:
+        estado = _normalizar_busqueda(request.args.get("estado"))
+        query = BodegaInventarioToma.query
+        if estado in {"abierto", "cerrado"}:
+            query = query.filter(BodegaInventarioToma.estado == estado)
+        rows = query.order_by(BodegaInventarioToma.fecha_inicio.desc(), BodegaInventarioToma.id_toma.desc()).all()
+        return jsonify([_serialize_bodega_toma(item) for item in rows]), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@inventarios_blueprint.route('/bodega_tipos', methods=['GET'])
+def listar_bodega_tipos():
+    try:
+        resumen = {}
+        for grupo in CATALOGO_INVENTARIO_GRUPOS:
+            categoria = str(grupo.get("categoria") or "Sin categoria").strip()
+            for nombre in grupo.get("items") or []:
+                nombre = str(nombre or "").strip()
+                if not nombre:
+                    continue
+                key = nombre.lower()
+                resumen[key] = {
+                    "categoria": categoria,
+                    "equipo_nombre": nombre,
+                    "total_esperado": 0,
+                    "catalogo": True,
+                }
+        for item in _equipos_esperados_bodega():
+            nombre = str(item.equipo_nombre or "").strip()
+            if not nombre:
+                continue
+            key = nombre.lower()
+            if key not in resumen:
+                resumen[key] = {
+                    "categoria": "Bodega",
+                    "equipo_nombre": nombre,
+                    "total_esperado": 0,
+                    "catalogo": False,
+                }
+            resumen[key]["total_esperado"] += 1
+        orden_categoria = {
+            str(grupo.get("categoria") or "").strip().lower(): idx
+            for idx, grupo in enumerate(CATALOGO_INVENTARIO_GRUPOS)
+        }
+        rows = sorted(
+            resumen.values(),
+            key=lambda x: (
+                orden_categoria.get(str(x.get("categoria") or "").strip().lower(), 999),
+                str(x.get("equipo_nombre") or "").lower(),
+            )
+        )
+        return jsonify(rows), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@inventarios_blueprint.route('/bodega_tomas', methods=['POST'])
+def crear_bodega_toma():
+    data = request.get_json() or {}
+    actual = _usuario_actual_desde_token()
+    nombre = str(data.get("nombre") or "").strip()
+    if not nombre:
+        nombre = f"Inventario bodega {datetime.utcnow().strftime('%d-%m-%Y')}"
+    try:
+        item = BodegaInventarioToma(
+            nombre=nombre,
+            ubicacion=str(data.get("ubicacion") or "Bodega central").strip() or "Bodega central",
+            estado="abierto",
+            responsable_id=getattr(actual, "id", None),
+            responsable_nombre=getattr(actual, "name", None) or getattr(actual, "email", None),
+            observacion=data.get("observacion"),
+        )
+        db.session.add(item)
+        db.session.commit()
+        return jsonify({"message": "Toma de inventario creada", "toma": _serialize_bodega_toma(item, include_detalle=True)}), 201
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
+
+@inventarios_blueprint.route('/bodega_tomas/<int:id_toma>', methods=['GET'])
+def obtener_bodega_toma(id_toma):
+    item = BodegaInventarioToma.query.get(id_toma)
+    if not item:
+        return jsonify({"error": "Toma de inventario no encontrada"}), 404
+    tipo_equipo = _normalizar_tipo_equipo(request.args.get("tipo_equipo"))
+    return jsonify(_serialize_bodega_toma(item, include_detalle=True, tipo_equipo=tipo_equipo)), 200
+
+
+@inventarios_blueprint.route('/bodega_tomas/<int:id_toma>/escaneos', methods=['POST'])
+def registrar_bodega_toma_escaneo(id_toma):
+    toma = BodegaInventarioToma.query.get(id_toma)
+    if not toma:
+        return jsonify({"error": "Toma de inventario no encontrada"}), 404
+    if toma.estado != "abierto":
+        return jsonify({"error": "La toma esta cerrada"}), 400
+
+    data = request.get_json() or {}
+    valor = str(data.get("valor") or data.get("codigo") or data.get("numero_serie") or "").strip()
+    if not valor:
+        return jsonify({"error": "Debes ingresar codigo o numero de serie"}), 400
+    tipo_seleccionado = _normalizar_tipo_equipo(data.get("tipo_equipo") or data.get("tipo_seleccionado"))
+    categoria_seleccionada = _normalizar_tipo_equipo(data.get("categoria") or data.get("categoria_seleccionada"))
+
+    actual = _usuario_actual_desde_token()
+    equipo = _buscar_equipo_bodega(valor)
+    resultado = "no_esperado"
+    codigo = valor
+    numero_serie = str(data.get("numero_serie") or "").strip() or None
+    equipo_nombre = str(data.get("equipo_nombre") or "").strip() or None
+    ubicacion_sistema = None
+    estado_sistema = None
+    bodega_equipo_id = None
+
+    if equipo:
+        bodega_equipo_id = equipo.id_bodega_equipo
+        codigo = equipo.codigo
+        numero_serie = equipo.numero_serie
+        equipo_nombre = equipo.equipo_nombre
+        ubicacion_sistema = equipo.ubicacion
+        estado_sistema = equipo.estado_equipo
+        ya_escaneado = BodegaInventarioEscaneo.query.filter_by(
+            toma_id=toma.id_toma,
+            bodega_equipo_id=equipo.id_bodega_equipo
+        ).first()
+        if tipo_seleccionado and str(equipo.equipo_nombre or "").strip().lower() != tipo_seleccionado.lower():
+            resultado = "no_corresponde"
+        else:
+            resultado = "duplicado" if ya_escaneado else "encontrado"
+    else:
+        equipo_nombre = tipo_seleccionado or equipo_nombre
+        if tipo_seleccionado:
+            resultado = "manual"
+        ya_escaneado = BodegaInventarioEscaneo.query.filter(
+            BodegaInventarioEscaneo.toma_id == toma.id_toma,
+            or_(
+                db.func.lower(BodegaInventarioEscaneo.codigo) == valor.lower(),
+                db.func.lower(BodegaInventarioEscaneo.numero_serie) == valor.lower()
+            )
+        ).first()
+        if ya_escaneado:
+            resultado = "duplicado"
+
+    try:
+        escaneo = BodegaInventarioEscaneo(
+            toma_id=toma.id_toma,
+            bodega_equipo_id=bodega_equipo_id,
+            codigo=codigo,
+            numero_serie=numero_serie,
+            equipo_nombre=equipo_nombre,
+            categoria_seleccionada=categoria_seleccionada or None,
+            tipo_seleccionado=tipo_seleccionado or None,
+            ubicacion_sistema=ubicacion_sistema,
+            estado_sistema=estado_sistema,
+            resultado=resultado,
+            escaneado_por_id=getattr(actual, "id", None),
+            escaneado_por_nombre=getattr(actual, "name", None) or getattr(actual, "email", None),
+            observacion=data.get("observacion"),
+        )
+        toma.updated_at = datetime.utcnow()
+        db.session.add(escaneo)
+        db.session.commit()
+        return jsonify({
+            "message": "Escaneo registrado",
+            "escaneo": _serialize_bodega_toma_escaneo(escaneo),
+            "toma": _serialize_bodega_toma(toma, include_detalle=True, tipo_equipo=tipo_seleccionado),
+        }), 201
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
+
+@inventarios_blueprint.route('/bodega_tomas/<int:id_toma>/cerrar', methods=['POST'])
+def cerrar_bodega_toma(id_toma):
+    item = BodegaInventarioToma.query.get(id_toma)
+    if not item:
+        return jsonify({"error": "Toma de inventario no encontrada"}), 404
+    try:
+        item.estado = "cerrado"
+        item.fecha_cierre = datetime.utcnow()
+        item.updated_at = datetime.utcnow()
+        db.session.commit()
+        return jsonify({"message": "Toma de inventario cerrada", "toma": _serialize_bodega_toma(item, include_detalle=True)}), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
+
+@inventarios_blueprint.route('/bodega_tomas/escaneos/<int:id_escaneo>', methods=['DELETE'])
+def eliminar_bodega_toma_escaneo(id_escaneo):
+    escaneo = BodegaInventarioEscaneo.query.get(id_escaneo)
+    if not escaneo:
+        return jsonify({"error": "Escaneo no encontrado"}), 404
+    if escaneo.toma and escaneo.toma.estado != "abierto":
+        return jsonify({"error": "No se puede eliminar un escaneo de una toma cerrada"}), 400
+    try:
+        toma = escaneo.toma
+        db.session.delete(escaneo)
+        if toma:
+            toma.updated_at = datetime.utcnow()
+        db.session.commit()
+        return jsonify({"message": "Escaneo eliminado"}), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": str(e)}), 500
 
 def is_allowed_file(filename):
     """Verifica si la extensión del archivo está permitida."""

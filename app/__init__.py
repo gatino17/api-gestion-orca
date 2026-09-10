@@ -699,6 +699,8 @@ def create_app():
         _schema_exec(text("ALTER TABLE bodega_inventario_equipos ADD COLUMN IF NOT EXISTS fecha_devolucion TIMESTAMP"))
         _schema_exec(text("ALTER TABLE bodega_inventario_equipos ADD COLUMN IF NOT EXISTS observacion_asignacion TEXT"))
         _schema_exec(text("ALTER TABLE bodega_inventario_equipos ADD COLUMN IF NOT EXISTS observacion_devolucion TEXT"))
+        _schema_exec(text("ALTER TABLE bodega_inventario_escaneos ADD COLUMN IF NOT EXISTS categoria_seleccionada VARCHAR(120)"))
+        _schema_exec(text("ALTER TABLE bodega_inventario_escaneos ADD COLUMN IF NOT EXISTS tipo_seleccionado VARCHAR(160)"))
         _schema_exec(text("ALTER TABLE cambios_equipo_mantencion ADD COLUMN IF NOT EXISTS estado_logistico VARCHAR(30) DEFAULT 'en_transito_bodega'"))
         _schema_exec(text("ALTER TABLE cambios_equipo_mantencion ADD COLUMN IF NOT EXISTS recepcion_bodega_por VARCHAR(120)"))
         _schema_exec(text("ALTER TABLE cambios_equipo_mantencion ADD COLUMN IF NOT EXISTS fecha_recepcion_bodega TIMESTAMP"))

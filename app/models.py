@@ -297,6 +297,64 @@ class BodegaInventarioEquipo(db.Model):
         return f"<BodegaInventarioEquipo(id={self.id_bodega_equipo}, codigo={self.codigo}, serie={self.numero_serie})>"
 
 
+class BodegaInventarioToma(db.Model):
+    __tablename__ = 'bodega_inventario_tomas'
+
+    id_toma = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    nombre = db.Column(db.String(160), nullable=False)
+    ubicacion = db.Column(db.String(120), nullable=False, default='Bodega central')
+    estado = db.Column(db.String(30), nullable=False, default='abierto', index=True)  # abierto | cerrado
+    responsable_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)
+    responsable_nombre = db.Column(db.String(120), nullable=True)
+    fecha_inicio = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    fecha_cierre = db.Column(db.DateTime, nullable=True)
+    observacion = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    responsable = db.relationship('User', backref='bodega_inventario_tomas')
+
+    def __repr__(self):
+        return f"<BodegaInventarioToma(id={self.id_toma}, estado='{self.estado}', nombre='{self.nombre}')>"
+
+
+class BodegaInventarioEscaneo(db.Model):
+    __tablename__ = 'bodega_inventario_escaneos'
+
+    id_escaneo = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    toma_id = db.Column(
+        db.Integer,
+        db.ForeignKey('bodega_inventario_tomas.id_toma', ondelete='CASCADE'),
+        nullable=False,
+        index=True
+    )
+    bodega_equipo_id = db.Column(
+        db.Integer,
+        db.ForeignKey('bodega_inventario_equipos.id_bodega_equipo', ondelete='SET NULL'),
+        nullable=True,
+        index=True
+    )
+    codigo = db.Column(db.String(120), nullable=True, index=True)
+    numero_serie = db.Column(db.String(120), nullable=True, index=True)
+    equipo_nombre = db.Column(db.String(160), nullable=True)
+    categoria_seleccionada = db.Column(db.String(120), nullable=True, index=True)
+    tipo_seleccionado = db.Column(db.String(160), nullable=True, index=True)
+    ubicacion_sistema = db.Column(db.String(120), nullable=True)
+    estado_sistema = db.Column(db.String(60), nullable=True)
+    resultado = db.Column(db.String(30), nullable=False, default='encontrado', index=True)  # encontrado | manual | no_esperado | duplicado | no_corresponde
+    escaneado_por_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)
+    escaneado_por_nombre = db.Column(db.String(120), nullable=True)
+    observacion = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    toma = db.relationship('BodegaInventarioToma', backref=db.backref('escaneos', cascade='all, delete-orphan'))
+    bodega_equipo = db.relationship('BodegaInventarioEquipo', backref='inventario_escaneos')
+    escaneado_por = db.relationship('User', backref='bodega_inventario_escaneos')
+
+    def __repr__(self):
+        return f"<BodegaInventarioEscaneo(id={self.id_escaneo}, toma={self.toma_id}, resultado='{self.resultado}')>"
+
+
 #tabla traslado
 class Traslado(db.Model):
     __tablename__ = 'traslados'
