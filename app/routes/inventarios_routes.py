@@ -109,6 +109,20 @@ def _normalizar_busqueda(valor):
     return str(valor or "").strip().lower()
 
 
+def _duplicate_bodega_equipo_response(item: BodegaInventarioEquipo):
+    ubicacion = item.ubicacion or "Bodega"
+    equipo = item.equipo_nombre or "Equipo"
+    serie = item.numero_serie or "-"
+    estado = item.estado_equipo or "-"
+    detalle = f"Ya existe en {ubicacion}: {equipo}, serie {serie}, estado {estado}."
+    return jsonify({
+        "error": detalle,
+        "duplicado": True,
+        "existente": _serialize_bodega_equipo(item),
+        "estado_asignacion": item.estado_asignacion or "en_bodega",
+    }), 400
+
+
 def _normalizar_tipo_equipo(valor):
     return str(valor or "").strip()
 
@@ -637,9 +651,9 @@ def crear_bodega_equipos():
             if not numero_serie or not codigo or not equipo_nombre:
                 return jsonify({"error": "numero_serie, codigo y equipo_nombre son obligatorios"}), 400
 
-            existe_codigo = BodegaInventarioEquipo.query.filter(db.func.lower(BodegaInventarioEquipo.codigo) == codigo.lower()).first()
-            if existe_codigo:
-                return jsonify({"error": f"El código ya existe: {codigo}"}), 400
+            existe_serie = BodegaInventarioEquipo.query.filter(db.func.lower(BodegaInventarioEquipo.numero_serie) == numero_serie.lower()).first()
+            if existe_serie:
+                return _duplicate_bodega_equipo_response(existe_serie)
 
             item = BodegaInventarioEquipo(
                 numero_serie=numero_serie,
@@ -677,18 +691,18 @@ def actualizar_bodega_equipo(id_bodega_equipo):
             serie = str(data.get("numero_serie") or "").strip()
             if not serie:
                 return jsonify({"error": "numero_serie es obligatorio"}), 400
+            dup = BodegaInventarioEquipo.query.filter(
+                db.func.lower(BodegaInventarioEquipo.numero_serie) == serie.lower(),
+                BodegaInventarioEquipo.id_bodega_equipo != item.id_bodega_equipo
+            ).first()
+            if dup:
+                return _duplicate_bodega_equipo_response(dup)
             item.numero_serie = serie
 
         if "codigo" in data:
             codigo = str(data.get("codigo") or "").strip()
             if not codigo:
                 return jsonify({"error": "codigo es obligatorio"}), 400
-            dup = BodegaInventarioEquipo.query.filter(
-                db.func.lower(BodegaInventarioEquipo.codigo) == codigo.lower(),
-                BodegaInventarioEquipo.id_bodega_equipo != item.id_bodega_equipo
-            ).first()
-            if dup:
-                return jsonify({"error": f"El código ya existe: {codigo}"}), 400
             item.codigo = codigo
 
         if "equipo_nombre" in data:
