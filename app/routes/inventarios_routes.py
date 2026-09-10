@@ -717,7 +717,7 @@ def actualizar_bodega_equipo(id_bodega_equipo):
             item.imagen_nombre = data.get("imagen_nombre")
         if "estado_asignacion" in data:
             estado_asignacion = str(data.get("estado_asignacion") or "en_bodega").strip().lower()
-            if estado_asignacion not in {"en_bodega", "asignado_tecnico"}:
+            if estado_asignacion not in {"en_bodega", "asignado_tecnico", "asignado_armado"}:
                 return jsonify({"error": "estado_asignacion invalido"}), 400
             item.estado_asignacion = estado_asignacion
             if estado_asignacion == "en_bodega":

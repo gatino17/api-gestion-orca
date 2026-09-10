@@ -1,12 +1,13 @@
 import json
 
 from flask import Blueprint, request, jsonify
-from ..models import EquiposIP, Centro, db, Armado, ArmadoCajaMovimiento, ActaEntrega
+from ..models import EquiposIP, Centro, db, Armado, ArmadoCajaMovimiento, ActaEntrega, BodegaInventarioEquipo
 from ..socketio_ext import emit_armado_event
 from datetime import datetime
 
 equipos_bp = Blueprint('equipos', __name__)
 ESTADOS_LOGISTICA_BODEGA_CERRADA = {"recepcionado_bodega", "revision_bodega", "baja_bodega"}
+ESTADOS_INVENTARIO_DISPONIBLE_ARMADO = {"operativo"}
 
 
 def tocar_fecha_inicio(armado_id):
@@ -77,6 +78,61 @@ def _serie_conflicto_ya_en_bodega(equipo_conflicto, numero_serie):
 
     return False
 
+
+def _normalizar_texto(valor):
+    return str(valor or "").strip().lower()
+
+
+def _buscar_inventario_bodega_por_serie_o_codigo(numero_serie=None, codigo=None):
+    serie = str(numero_serie or "").strip()
+    cod = str(codigo or "").strip()
+    if not serie and not cod:
+        return None
+
+    filtros = []
+    if serie:
+        filtros.append(db.func.lower(BodegaInventarioEquipo.numero_serie) == serie.lower())
+    if cod:
+        filtros.append(db.func.lower(BodegaInventarioEquipo.codigo) == cod.lower())
+    if not filtros:
+        return None
+
+    return (
+        BodegaInventarioEquipo.query
+        .filter(db.or_(*filtros))
+        .order_by(BodegaInventarioEquipo.updated_at.desc(), BodegaInventarioEquipo.id_bodega_equipo.desc())
+        .first()
+    )
+
+
+def _inventario_disponible_para_armado(item):
+    if not item:
+        return False
+    estado_asignacion = _normalizar_texto(item.estado_asignacion or "en_bodega")
+    ubicacion = _normalizar_texto(item.ubicacion or "Bodega central")
+    estado_equipo = _normalizar_texto(item.estado_equipo or "Operativo")
+    return (
+        estado_asignacion == "en_bodega"
+        and ubicacion == "bodega central"
+        and estado_equipo in ESTADOS_INVENTARIO_DISPONIBLE_ARMADO
+    )
+
+
+def _reservar_inventario_para_armado(numero_serie=None, codigo=None, armado_id=None, centro_nombre=None):
+    item = _buscar_inventario_bodega_por_serie_o_codigo(numero_serie=numero_serie, codigo=codigo)
+    if not _inventario_disponible_para_armado(item):
+        return None
+
+    item.estado_asignacion = "asignado_armado"
+    item.ubicacion = "Asignado a armado"
+    item.fecha_asignacion = datetime.utcnow()
+    detalle = f"Armado {armado_id}" if armado_id else "Armado"
+    if centro_nombre:
+        detalle = f"{detalle} - {centro_nombre}"
+    item.observacion_asignacion = detalle
+    db.session.add(item)
+    return item
+
 # Obtener todos los equipos o equipos por centro_id
 @equipos_bp.route('/', methods=['GET'])
 def obtener_equipos():
@@ -131,6 +187,20 @@ def validar_serie_equipo():
         break
 
     if not conflicto:
+        item_bodega = _buscar_inventario_bodega_por_serie_o_codigo(numero_serie=numero_serie)
+        if item_bodega and not _inventario_disponible_para_armado(item_bodega):
+            return jsonify({
+                "duplicado": True,
+                "numero_serie": numero_serie,
+                "equipo": {
+                    "id_bodega_equipo": item_bodega.id_bodega_equipo,
+                    "nombre": item_bodega.equipo_nombre,
+                    "codigo": item_bodega.codigo,
+                    "centro_nombre": item_bodega.ubicacion or "Bodega",
+                    "estado_equipo": item_bodega.estado_equipo,
+                    "estado_asignacion": item_bodega.estado_asignacion,
+                }
+            }), 200
         return jsonify({"duplicado": False}), 200
 
     centro = Centro.query.get(conflicto.centro_id)
@@ -173,6 +243,12 @@ def crear_equipo():
         armado_id = data.get('armado_id')
         if armado_id:
             tocar_fecha_inicio(armado_id)
+            _reservar_inventario_para_armado(
+                numero_serie=nuevo_equipo.numero_serie,
+                codigo=nuevo_equipo.codigo,
+                armado_id=armado_id,
+                centro_nombre=centro.nombre,
+            )
             db.session.add(ArmadoCajaMovimiento(
                 armado_id=armado_id,
                 tipo="equipo",
@@ -222,6 +298,13 @@ def actualizar_equipo(id_equipo):
         armado_id = data.get('armado_id')
         if armado_id:
             tocar_fecha_inicio(armado_id)
+            centro_equipo = Centro.query.get(equipo.centro_id)
+            _reservar_inventario_para_armado(
+                numero_serie=equipo.numero_serie,
+                codigo=equipo.codigo,
+                armado_id=armado_id,
+                centro_nombre=centro_equipo.nombre if centro_equipo else None,
+            )
             db.session.add(ArmadoCajaMovimiento(
                 armado_id=armado_id,
                 tipo="equipo",
