@@ -1,7 +1,8 @@
 import os
 from flask import Blueprint, request, jsonify, send_file
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 from werkzeug.utils import secure_filename
 import jwt
 from sqlalchemy import or_
@@ -14,6 +15,28 @@ SECRET_KEY = "remoto753524"
 # Configuración para archivos
 ALLOWED_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.pdf'}
 UPLOAD_FOLDER = os.path.join(os.getcwd(), 'uploads/inventarios_docs')
+try:
+    CHILE_TZ = ZoneInfo("America/Santiago")
+except Exception:
+    CHILE_TZ = timezone(timedelta(hours=-3))
+
+
+def _now_utc():
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _now_chile():
+    return datetime.now(CHILE_TZ)
+
+
+def _iso_utc(value):
+    if not value:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    else:
+        value = value.astimezone(timezone.utc)
+    return value.isoformat().replace("+00:00", "Z")
 
 CATALOGO_INVENTARIO_GRUPOS = [
     {
@@ -96,12 +119,12 @@ def _serialize_bodega_equipo(item: BodegaInventarioEquipo):
         "tecnico_asignado_nombre": item.tecnico_asignado_nombre,
         "asignado_por_id": item.asignado_por_id,
         "asignado_por_nombre": item.asignado_por_nombre,
-        "fecha_asignacion": item.fecha_asignacion.isoformat() if item.fecha_asignacion else None,
-        "fecha_devolucion": item.fecha_devolucion.isoformat() if item.fecha_devolucion else None,
+        "fecha_asignacion": _iso_utc(item.fecha_asignacion),
+        "fecha_devolucion": _iso_utc(item.fecha_devolucion),
         "observacion_asignacion": item.observacion_asignacion,
         "observacion_devolucion": item.observacion_devolucion,
-        "created_at": item.created_at.isoformat() if item.created_at else None,
-        "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+        "created_at": _iso_utc(item.created_at),
+        "updated_at": _iso_utc(item.updated_at),
     }
 
 
@@ -176,7 +199,7 @@ def _serialize_bodega_toma_escaneo(item: BodegaInventarioEscaneo):
         "escaneado_por_id": item.escaneado_por_id,
         "escaneado_por_nombre": item.escaneado_por_nombre,
         "observacion": item.observacion,
-        "created_at": item.created_at.isoformat() if item.created_at else None,
+        "created_at": _iso_utc(item.created_at),
     }
 
 
@@ -236,11 +259,11 @@ def _serialize_bodega_toma(item: BodegaInventarioToma, include_detalle=False, ti
         "estado": item.estado,
         "responsable_id": item.responsable_id,
         "responsable_nombre": item.responsable_nombre,
-        "fecha_inicio": item.fecha_inicio.isoformat() if item.fecha_inicio else None,
-        "fecha_cierre": item.fecha_cierre.isoformat() if item.fecha_cierre else None,
+        "fecha_inicio": _iso_utc(item.fecha_inicio),
+        "fecha_cierre": _iso_utc(item.fecha_cierre),
         "observacion": item.observacion,
-        "created_at": item.created_at.isoformat() if item.created_at else None,
-        "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+        "created_at": _iso_utc(item.created_at),
+        "updated_at": _iso_utc(item.updated_at),
         "resumen": _resumen_bodega_toma(item, include_detalle=include_detalle, tipo_equipo=tipo_equipo),
     }
     if include_detalle:
@@ -269,6 +292,11 @@ def _usuario_actual_desde_token():
         return User.query.get(user_id)
     except Exception:
         return None
+
+
+def _usuario_actual_es_admin():
+    usuario = _usuario_actual_desde_token()
+    return bool(usuario and str(usuario.rol or "").strip().lower() == "admin")
 
 
 @inventarios_blueprint.route('/bodega_tomas', methods=['GET'])
@@ -336,7 +364,7 @@ def crear_bodega_toma():
     actual = _usuario_actual_desde_token()
     nombre = str(data.get("nombre") or "").strip()
     if not nombre:
-        nombre = f"Inventario bodega {datetime.utcnow().strftime('%d-%m-%Y')}"
+        nombre = f"Inventario bodega {_now_chile().strftime('%d-%m-%Y')}"
     try:
         item = BodegaInventarioToma(
             nombre=nombre,
@@ -361,6 +389,22 @@ def obtener_bodega_toma(id_toma):
         return jsonify({"error": "Toma de inventario no encontrada"}), 404
     tipo_equipo = _normalizar_tipo_equipo(request.args.get("tipo_equipo"))
     return jsonify(_serialize_bodega_toma(item, include_detalle=True, tipo_equipo=tipo_equipo)), 200
+
+
+@inventarios_blueprint.route('/bodega_tomas/<int:id_toma>', methods=['DELETE'])
+def eliminar_bodega_toma(id_toma):
+    if not _usuario_actual_es_admin():
+        return jsonify({"error": "Solo admin puede eliminar informes de inventario"}), 403
+    item = BodegaInventarioToma.query.get(id_toma)
+    if not item:
+        return jsonify({"error": "Toma de inventario no encontrada"}), 404
+    try:
+        db.session.delete(item)
+        db.session.commit()
+        return jsonify({"message": "Informe eliminado"}), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": str(e)}), 500
 
 
 @inventarios_blueprint.route('/bodega_tomas/<int:id_toma>/escaneos', methods=['POST'])
@@ -433,7 +477,7 @@ def registrar_bodega_toma_escaneo(id_toma):
             escaneado_por_nombre=getattr(actual, "name", None) or getattr(actual, "email", None),
             observacion=data.get("observacion"),
         )
-        toma.updated_at = datetime.utcnow()
+        toma.updated_at = _now_utc()
         db.session.add(escaneo)
         db.session.commit()
         return jsonify({
@@ -453,8 +497,8 @@ def cerrar_bodega_toma(id_toma):
         return jsonify({"error": "Toma de inventario no encontrada"}), 404
     try:
         item.estado = "cerrado"
-        item.fecha_cierre = datetime.utcnow()
-        item.updated_at = datetime.utcnow()
+        item.fecha_cierre = _now_utc()
+        item.updated_at = _now_utc()
         db.session.commit()
         return jsonify({"message": "Toma de inventario cerrada", "toma": _serialize_bodega_toma(item, include_detalle=True)}), 200
     except Exception as e:
@@ -467,13 +511,13 @@ def eliminar_bodega_toma_escaneo(id_escaneo):
     escaneo = BodegaInventarioEscaneo.query.get(id_escaneo)
     if not escaneo:
         return jsonify({"error": "Escaneo no encontrado"}), 404
-    if escaneo.toma and escaneo.toma.estado != "abierto":
-        return jsonify({"error": "No se puede eliminar un escaneo de una toma cerrada"}), 400
+    if escaneo.toma and escaneo.toma.estado != "abierto" and not _usuario_actual_es_admin():
+        return jsonify({"error": "Solo admin puede eliminar equipos de un informe cerrado"}), 403
     try:
         toma = escaneo.toma
         db.session.delete(escaneo)
         if toma:
-            toma.updated_at = datetime.utcnow()
+            toma.updated_at = _now_utc()
         db.session.commit()
         return jsonify({"message": "Escaneo eliminado"}), 200
     except Exception as e:
