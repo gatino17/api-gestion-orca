@@ -443,10 +443,17 @@ def registrar_bodega_toma_escaneo(id_toma):
             toma_id=toma.id_toma,
             bodega_equipo_id=equipo.id_bodega_equipo
         ).first()
+        if ya_escaneado:
+            return jsonify({
+                "error": "Este equipo ya lo escaneaste. Duplicado.",
+                "duplicado": True,
+                "escaneo": _serialize_bodega_toma_escaneo(ya_escaneado),
+                "toma": _serialize_bodega_toma(toma, include_detalle=True, tipo_equipo=tipo_seleccionado),
+            }), 409
         if tipo_seleccionado and str(equipo.equipo_nombre or "").strip().lower() != tipo_seleccionado.lower():
             resultado = "no_corresponde"
         else:
-            resultado = "duplicado" if ya_escaneado else "encontrado"
+            resultado = "encontrado"
     else:
         equipo_nombre = tipo_seleccionado or equipo_nombre
         if tipo_seleccionado:
@@ -459,7 +466,12 @@ def registrar_bodega_toma_escaneo(id_toma):
             )
         ).first()
         if ya_escaneado:
-            resultado = "duplicado"
+            return jsonify({
+                "error": "Este equipo ya lo escaneaste. Duplicado.",
+                "duplicado": True,
+                "escaneo": _serialize_bodega_toma_escaneo(ya_escaneado),
+                "toma": _serialize_bodega_toma(toma, include_detalle=True, tipo_equipo=tipo_seleccionado),
+            }), 409
 
     try:
         escaneo = BodegaInventarioEscaneo(
