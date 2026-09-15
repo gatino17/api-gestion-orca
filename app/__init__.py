@@ -603,6 +603,14 @@ def create_app():
         _schema_exec(
             text(
                 """
+                ALTER TABLE revision_equipos_detalles
+                ADD COLUMN IF NOT EXISTS bodega_equipo_id INTEGER REFERENCES bodega_inventario_equipos(id_bodega_equipo) ON DELETE SET NULL
+                """
+            )
+        )
+        _schema_exec(
+            text(
+                """
                 ALTER TABLE revision_equipos_ordenes
                 ADD COLUMN IF NOT EXISTS checklist_json TEXT
                 """

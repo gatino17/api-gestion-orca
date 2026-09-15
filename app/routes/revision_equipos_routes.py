@@ -6,6 +6,7 @@ from flask import Blueprint, current_app, jsonify, request
 
 from ..database import db
 from ..models import (
+    BodegaInventarioEquipo,
     Centro,
     RetiroTerreno,
     RetiroTerrenoEquipo,
@@ -52,6 +53,7 @@ def _serialize_detalle(d: RevisionEquipoDetalle):
         "id_revision_detalle": d.id_revision_detalle,
         "revision_orden_id": d.revision_orden_id,
         "retiro_equipo_id": d.retiro_equipo_id,
+        "bodega_equipo_id": d.bodega_equipo_id,
         "equipo_nombre": d.equipo_nombre,
         "numero_serie": d.numero_serie,
         "codigo": d.codigo,
@@ -170,11 +172,25 @@ def crear_orden():
         retiro_id = data.get("retiro_terreno_id")
         retiro = RetiroTerreno.query.get(retiro_id) if retiro_id else None
 
+        detalles_payload = data.get("detalles") if isinstance(data.get("detalles"), list) else None
+        bodega_equipo_ids = []
+        if detalles_payload is not None:
+            for raw in detalles_payload:
+                if not isinstance(raw, dict):
+                    continue
+                raw_bodega_id = raw.get("bodega_equipo_id")
+                try:
+                    bodega_id = int(raw_bodega_id) if raw_bodega_id else 0
+                except Exception:
+                    bodega_id = 0
+                if bodega_id:
+                    bodega_equipo_ids.append(bodega_id)
+
         centro_id = data.get("centro_id") or (retiro.centro_id if retiro else None)
-        if not centro_id:
+        if not centro_id and not bodega_equipo_ids:
             return jsonify({"error": "centro_id es requerido"}), 400
-        centro = Centro.query.get(centro_id)
-        if not centro:
+        centro = Centro.query.get(centro_id) if centro_id else None
+        if centro_id and not centro:
             return jsonify({"error": "Centro no encontrado"}), 404
 
         if retiro:
@@ -189,6 +205,28 @@ def crear_orden():
             )
             if existente:
                 return jsonify({"error": "Ya existe una orden activa para este retiro y area"}), 400
+        if bodega_equipo_ids:
+            existentes_bodega = {
+                item.id_bodega_equipo
+                for item in BodegaInventarioEquipo.query.filter(
+                    BodegaInventarioEquipo.id_bodega_equipo.in_(bodega_equipo_ids)
+                ).all()
+            }
+            faltantes_bodega = [item for item in bodega_equipo_ids if item not in existentes_bodega]
+            if faltantes_bodega:
+                return jsonify({"error": "Equipo de bodega no encontrado"}), 404
+            existente_bodega = (
+                RevisionEquipoOrden.query.join(RevisionEquipoDetalle)
+                .filter(
+                    RevisionEquipoDetalle.bodega_equipo_id.in_(bodega_equipo_ids),
+                    RevisionEquipoOrden.area == area,
+                    RevisionEquipoOrden.estado != "cerrado",
+                )
+                .order_by(RevisionEquipoOrden.id_revision_orden.desc())
+                .first()
+            )
+            if existente_bodega:
+                return jsonify({"error": "Ya existe una orden activa para este equipo y area"}), 400
 
         asignado_user_id = data.get("asignado_user_id")
         asignado_nombre = str(data.get("asignado_nombre") or "").strip() or None
@@ -203,7 +241,7 @@ def crear_orden():
 
         orden = RevisionEquipoOrden(
             retiro_terreno_id=retiro.id_retiro_terreno if retiro else None,
-            centro_id=centro.id_centro,
+            centro_id=centro.id_centro if centro else None,
             area=area,
             estado="pendiente",
             asignado_user_id=asignado_user_id if asignado_user_id else None,
@@ -215,7 +253,6 @@ def crear_orden():
         db.session.add(orden)
         db.session.flush()
 
-        detalles_payload = data.get("detalles") if isinstance(data.get("detalles"), list) else None
         if detalles_payload is not None:
             for raw in detalles_payload:
                 if not isinstance(raw, dict):
@@ -226,6 +263,7 @@ def crear_orden():
                 det = RevisionEquipoDetalle(
                     revision_orden_id=orden.id_revision_orden,
                     retiro_equipo_id=raw.get("retiro_equipo_id"),
+                    bodega_equipo_id=raw.get("bodega_equipo_id"),
                     equipo_nombre=nombre,
                     numero_serie=str(raw.get("numero_serie") or "").strip() or None,
                     codigo=str(raw.get("codigo") or "").strip() or None,
@@ -364,6 +402,15 @@ def devolver_operativos_bodega(id_orden):
                 d.disponible_bodega = True
                 if not d.fecha_disponible_bodega:
                     d.fecha_disponible_bodega = datetime.utcnow()
+                if d.bodega_equipo_id:
+                    equipo_bodega = BodegaInventarioEquipo.query.get(d.bodega_equipo_id)
+                    if equipo_bodega:
+                        if resultado == "operativo":
+                            equipo_bodega.estado_equipo = "Operativo"
+                            equipo_bodega.ubicacion = "Bodega central"
+                        elif resultado in {"no_operativo", "no_reparable"}:
+                            equipo_bodega.estado_equipo = "No operativo / baja"
+                            equipo_bodega.ubicacion = "Bodega de baja"
                 db.session.add(
                     RevisionEquipoEvento(
                         revision_orden_id=orden.id_revision_orden,

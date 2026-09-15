@@ -909,6 +909,12 @@ class RevisionEquipoDetalle(db.Model):
         nullable=True,
         index=True
     )
+    bodega_equipo_id = db.Column(
+        db.Integer,
+        db.ForeignKey('bodega_inventario_equipos.id_bodega_equipo', ondelete="SET NULL"),
+        nullable=True,
+        index=True
+    )
     equipo_nombre = db.Column(db.String(120), nullable=False)
     numero_serie = db.Column(db.String(60), nullable=True)
     codigo = db.Column(db.String(60), nullable=True)
@@ -921,6 +927,7 @@ class RevisionEquipoDetalle(db.Model):
 
     orden = db.relationship('RevisionEquipoOrden', backref=db.backref('detalles', cascade="all, delete-orphan"))
     retiro_equipo = db.relationship('RetiroTerrenoEquipo', backref='revision_detalles')
+    bodega_equipo = db.relationship('BodegaInventarioEquipo', backref='revision_detalles')
 
     def __repr__(self):
         return (
