@@ -439,9 +439,13 @@ def registrar_bodega_toma_escaneo(id_toma):
         equipo_nombre = equipo.equipo_nombre
         ubicacion_sistema = equipo.ubicacion
         estado_sistema = equipo.estado_equipo
-        ya_escaneado = BodegaInventarioEscaneo.query.filter_by(
-            toma_id=toma.id_toma,
-            bodega_equipo_id=equipo.id_bodega_equipo
+        ya_escaneado = BodegaInventarioEscaneo.query.filter(
+            BodegaInventarioEscaneo.toma_id == toma.id_toma,
+            or_(
+                BodegaInventarioEscaneo.bodega_equipo_id == equipo.id_bodega_equipo,
+                db.func.lower(BodegaInventarioEscaneo.codigo) == str(codigo or "").lower(),
+                db.func.lower(BodegaInventarioEscaneo.numero_serie) == str(numero_serie or "").lower(),
+            )
         ).first()
         if ya_escaneado:
             return jsonify({
