@@ -506,6 +506,24 @@ def cerrar_bodega_toma(id_toma):
         return jsonify({"error": str(e)}), 500
 
 
+@inventarios_blueprint.route('/bodega_tomas/<int:id_toma>/reabrir', methods=['POST'])
+def reabrir_bodega_toma(id_toma):
+    if not _usuario_actual_es_admin():
+        return jsonify({"error": "Solo admin puede reabrir informes de inventario"}), 403
+    item = BodegaInventarioToma.query.get(id_toma)
+    if not item:
+        return jsonify({"error": "Toma de inventario no encontrada"}), 404
+    try:
+        item.estado = "abierto"
+        item.fecha_cierre = None
+        item.updated_at = _now_utc()
+        db.session.commit()
+        return jsonify({"message": "Toma de inventario reabierta", "toma": _serialize_bodega_toma(item, include_detalle=True)}), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
+
 @inventarios_blueprint.route('/bodega_tomas/escaneos/<int:id_escaneo>', methods=['DELETE'])
 def eliminar_bodega_toma_escaneo(id_escaneo):
     escaneo = BodegaInventarioEscaneo.query.get(id_escaneo)
