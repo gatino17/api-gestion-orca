@@ -251,7 +251,12 @@ def _resumen_bodega_toma(toma: BodegaInventarioToma, include_detalle=False, tipo
     return resumen
 
 
-def _serialize_bodega_toma(item: BodegaInventarioToma, include_detalle=False, tipo_equipo=None):
+def _serialize_bodega_toma(
+    item: BodegaInventarioToma,
+    include_detalle=False,
+    tipo_equipo=None,
+    include_escaneos=False,
+):
     data = {
         "id_toma": item.id_toma,
         "nombre": item.nombre,
@@ -266,7 +271,7 @@ def _serialize_bodega_toma(item: BodegaInventarioToma, include_detalle=False, ti
         "updated_at": _iso_utc(item.updated_at),
         "resumen": _resumen_bodega_toma(item, include_detalle=include_detalle, tipo_equipo=tipo_equipo),
     }
-    if include_detalle:
+    if include_detalle or include_escaneos:
         escaneos = [
             escaneo for escaneo in list(item.escaneos or [])
             if _escaneo_pertenece_tipo(escaneo, tipo_equipo)
@@ -388,7 +393,13 @@ def obtener_bodega_toma(id_toma):
     if not item:
         return jsonify({"error": "Toma de inventario no encontrada"}), 404
     tipo_equipo = _normalizar_tipo_equipo(request.args.get("tipo_equipo"))
-    return jsonify(_serialize_bodega_toma(item, include_detalle=True, tipo_equipo=tipo_equipo)), 200
+    compacta = _normalizar_busqueda(request.args.get("compact")) in {"1", "true", "si"}
+    return jsonify(_serialize_bodega_toma(
+        item,
+        include_detalle=not compacta,
+        tipo_equipo=tipo_equipo,
+        include_escaneos=compacta,
+    )), 200
 
 
 @inventarios_blueprint.route('/bodega_tomas/<int:id_toma>', methods=['DELETE'])
@@ -443,7 +454,6 @@ def registrar_bodega_toma_escaneo(id_toma):
             BodegaInventarioEscaneo.toma_id == toma.id_toma,
             or_(
                 BodegaInventarioEscaneo.bodega_equipo_id == equipo.id_bodega_equipo,
-                db.func.lower(BodegaInventarioEscaneo.codigo) == str(codigo or "").lower(),
                 db.func.lower(BodegaInventarioEscaneo.numero_serie) == str(numero_serie or "").lower(),
             )
         ).first()
@@ -452,30 +462,16 @@ def registrar_bodega_toma_escaneo(id_toma):
                 "error": "Este equipo ya lo escaneaste. Duplicado.",
                 "duplicado": True,
                 "escaneo": _serialize_bodega_toma_escaneo(ya_escaneado),
-                "toma": _serialize_bodega_toma(toma, include_detalle=True, tipo_equipo=tipo_seleccionado),
             }), 409
         if tipo_seleccionado and str(equipo.equipo_nombre or "").strip().lower() != tipo_seleccionado.lower():
             resultado = "no_corresponde"
         else:
             resultado = "encontrado"
     else:
-        equipo_nombre = tipo_seleccionado or equipo_nombre
-        if tipo_seleccionado:
-            resultado = "manual"
-        ya_escaneado = BodegaInventarioEscaneo.query.filter(
-            BodegaInventarioEscaneo.toma_id == toma.id_toma,
-            or_(
-                db.func.lower(BodegaInventarioEscaneo.codigo) == valor.lower(),
-                db.func.lower(BodegaInventarioEscaneo.numero_serie) == valor.lower()
-            )
-        ).first()
-        if ya_escaneado:
-            return jsonify({
-                "error": "Este equipo ya lo escaneaste. Duplicado.",
-                "duplicado": True,
-                "escaneo": _serialize_bodega_toma_escaneo(ya_escaneado),
-                "toma": _serialize_bodega_toma(toma, include_detalle=True, tipo_equipo=tipo_seleccionado),
-            }), 409
+        return jsonify({
+            "error": "Este equipo no esta disponible en Bodega central. Agregalo a bodega primero.",
+            "no_disponible": True,
+        }), 404
 
     try:
         escaneo = BodegaInventarioEscaneo(
@@ -499,7 +495,7 @@ def registrar_bodega_toma_escaneo(id_toma):
         return jsonify({
             "message": "Escaneo registrado",
             "escaneo": _serialize_bodega_toma_escaneo(escaneo),
-            "toma": _serialize_bodega_toma(toma, include_detalle=True, tipo_equipo=tipo_seleccionado),
+            "resumen": _resumen_bodega_toma(toma, tipo_equipo=tipo_seleccionado),
         }), 201
     except Exception as e:
         db.session.rollback()
