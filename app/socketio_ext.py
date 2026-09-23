@@ -43,3 +43,11 @@ def emit_roles_event(event_name, payload):
         socketio.emit(event_name, payload or {})
     except Exception:
         pass
+
+
+def emit_inventario_event(event_name, payload):
+    """Emite eventos de inventario sin interrumpir la operacion REST."""
+    try:
+        socketio.emit(event_name, payload or {})
+    except Exception:
+        pass

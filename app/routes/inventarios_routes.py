@@ -7,6 +7,7 @@ from werkzeug.utils import secure_filename
 import jwt
 from sqlalchemy import or_
 from ..models import Inventario, Centro, BodegaInventarioEquipo, BodegaInventarioToma, BodegaInventarioEscaneo, User, db
+from ..socketio_ext import emit_inventario_event
 
 # Crear el blueprint
 inventarios_blueprint = Blueprint('inventarios', __name__)
@@ -412,6 +413,10 @@ def eliminar_bodega_toma(id_toma):
     try:
         db.session.delete(item)
         db.session.commit()
+        emit_inventario_event("inventario_updated", {
+            "tipo": "toma_eliminada",
+            "id_toma": id_toma,
+        })
         return jsonify({"message": "Informe eliminado"}), 200
     except Exception as e:
         db.session.rollback()
