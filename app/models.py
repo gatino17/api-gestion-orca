@@ -341,6 +341,7 @@ class BodegaInventarioEscaneo(db.Model):
     tipo_seleccionado = db.Column(db.String(160), nullable=True, index=True)
     ubicacion_sistema = db.Column(db.String(120), nullable=True)
     estado_sistema = db.Column(db.String(60), nullable=True)
+    revision_area = db.Column(db.String(30), nullable=True)
     resultado = db.Column(db.String(30), nullable=False, default='encontrado', index=True)  # encontrado | manual | no_esperado | duplicado | no_corresponde
     escaneado_por_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)
     escaneado_por_nombre = db.Column(db.String(120), nullable=True)

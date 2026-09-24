@@ -6,7 +6,17 @@ from zoneinfo import ZoneInfo
 from werkzeug.utils import secure_filename
 import jwt
 from sqlalchemy import or_
-from ..models import Inventario, Centro, BodegaInventarioEquipo, BodegaInventarioToma, BodegaInventarioEscaneo, User, db
+from ..models import (
+    Inventario,
+    Centro,
+    BodegaInventarioEquipo,
+    BodegaInventarioToma,
+    BodegaInventarioEscaneo,
+    RevisionEquipoDetalle,
+    RevisionEquipoOrden,
+    User,
+    db,
+)
 from ..socketio_ext import emit_inventario_event
 
 # Crear el blueprint
@@ -184,6 +194,25 @@ def _buscar_equipo_bodega(valor):
     )
 
 
+def _area_revision_activa_bodega(bodega_equipo_id):
+    if not bodega_equipo_id:
+        return None
+    row = (
+        db.session.query(RevisionEquipoOrden.area)
+        .join(
+            RevisionEquipoDetalle,
+            RevisionEquipoDetalle.revision_orden_id == RevisionEquipoOrden.id_revision_orden,
+        )
+        .filter(
+            RevisionEquipoDetalle.bodega_equipo_id == bodega_equipo_id,
+            RevisionEquipoOrden.estado != "cerrado",
+        )
+        .order_by(RevisionEquipoOrden.id_revision_orden.desc())
+        .first()
+    )
+    return row[0] if row else None
+
+
 def _serialize_bodega_toma_escaneo(item: BodegaInventarioEscaneo):
     return {
         "id_escaneo": item.id_escaneo,
@@ -196,6 +225,7 @@ def _serialize_bodega_toma_escaneo(item: BodegaInventarioEscaneo):
         "tipo_seleccionado": item.tipo_seleccionado,
         "ubicacion_sistema": item.ubicacion_sistema,
         "estado_sistema": item.estado_sistema,
+        "revision_area": item.revision_area or _area_revision_activa_bodega(item.bodega_equipo_id),
         "resultado": item.resultado,
         "escaneado_por_id": item.escaneado_por_id,
         "escaneado_por_nombre": item.escaneado_por_nombre,
@@ -446,6 +476,7 @@ def registrar_bodega_toma_escaneo(id_toma):
     equipo_nombre = str(data.get("equipo_nombre") or "").strip() or None
     ubicacion_sistema = None
     estado_sistema = None
+    revision_area = None
     bodega_equipo_id = None
 
     if equipo:
@@ -455,6 +486,7 @@ def registrar_bodega_toma_escaneo(id_toma):
         equipo_nombre = equipo.equipo_nombre
         ubicacion_sistema = equipo.ubicacion
         estado_sistema = equipo.estado_equipo
+        revision_area = _area_revision_activa_bodega(equipo.id_bodega_equipo)
         ya_escaneado = BodegaInventarioEscaneo.query.filter(
             BodegaInventarioEscaneo.toma_id == toma.id_toma,
             or_(
@@ -489,6 +521,7 @@ def registrar_bodega_toma_escaneo(id_toma):
             tipo_seleccionado=tipo_seleccionado or None,
             ubicacion_sistema=ubicacion_sistema,
             estado_sistema=estado_sistema,
+            revision_area=revision_area,
             resultado=resultado,
             escaneado_por_id=getattr(actual, "id", None),
             escaneado_por_nombre=getattr(actual, "name", None) or getattr(actual, "email", None),
