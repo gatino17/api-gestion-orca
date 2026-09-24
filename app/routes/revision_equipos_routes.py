@@ -20,7 +20,7 @@ from ..models import (
 revision_equipos_blueprint = Blueprint("revision_equipos", __name__)
 
 AREAS_VALIDAS = {"camaras", "pc", "energia"}
-ESTADOS_VALIDOS = {"pendiente", "en_revision", "diagnosticado", "cerrado"}
+ESTADOS_VALIDOS = {"pendiente", "en_revision", "diagnosticado", "cerrado", "anulado"}
 RESULTADOS_VALIDOS = {"operativo", "no_operativo", "reparable", "no_reparable", "requiere_repuesto", ""}
 
 
@@ -297,6 +297,9 @@ def actualizar_orden(id_orden):
         orden = RevisionEquipoOrden.query.get(id_orden)
         if not orden:
             return jsonify({"error": "Orden no encontrada"}), 404
+        detalles_orden = list(orden.detalles or [])
+        if detalles_orden and all(bool(detalle.disponible_bodega) for detalle in detalles_orden):
+            return jsonify({"error": "La orden ya forma parte del historial y no puede modificarse"}), 409
 
         if "area" in data:
             area = str(data.get("area") or "").strip().lower()
@@ -304,6 +307,7 @@ def actualizar_orden(id_orden):
                 return jsonify({"error": "area invalida"}), 400
             orden.area = area
 
+        estado_anterior = str(orden.estado or "").lower()
         if "estado" in data:
             estado = str(data.get("estado") or "").strip().lower()
             if estado not in ESTADOS_VALIDOS:
@@ -311,8 +315,20 @@ def actualizar_orden(id_orden):
             orden.estado = estado
             if estado == "en_revision" and not orden.fecha_inicio_revision:
                 orden.fecha_inicio_revision = datetime.utcnow()
-            if estado == "cerrado":
+            if estado in {"cerrado", "anulado"}:
                 orden.fecha_cierre = datetime.utcnow()
+            if estado == "anulado" and estado_anterior != "anulado":
+                usuario = _usuario_actual()
+                db.session.add(
+                    RevisionEquipoEvento(
+                        revision_orden_id=orden.id_revision_orden,
+                        revision_detalle_id=None,
+                        evento="orden_anulada",
+                        observacion=data.get("observacion"),
+                        user_id=(usuario.id if usuario else None),
+                        user_nombre=((usuario.name if usuario else None) or "Sistema"),
+                    )
+                )
 
         if "asignado_user_id" in data:
             uid = data.get("asignado_user_id")
@@ -377,6 +393,8 @@ def eliminar_orden(id_orden):
         orden = RevisionEquipoOrden.query.get(id_orden)
         if not orden:
             return jsonify({"error": "Orden no encontrada"}), 404
+        if str(orden.estado or "").lower() in {"cerrado", "anulado"} or orden.eventos:
+            return jsonify({"error": "La orden tiene historial y no puede eliminarse"}), 409
         db.session.delete(orden)
         db.session.commit()
         return jsonify({"message": "Orden eliminada"}), 200
@@ -396,9 +414,13 @@ def devolver_operativos_bodega(id_orden):
         usuario = _usuario_actual()
         observacion = data.get("observacion")
         actualizados = 0
+        ya_devueltos = 0
         for d in (orden.detalles or []):
             resultado = str(d.resultado or "").strip().lower()
             if resultado in {"operativo", "no_operativo", "no_reparable"}:
+                if d.disponible_bodega:
+                    ya_devueltos += 1
+                    continue
                 d.disponible_bodega = True
                 if not d.fecha_disponible_bodega:
                     d.fecha_disponible_bodega = datetime.utcnow()
@@ -425,11 +447,17 @@ def devolver_operativos_bodega(id_orden):
                 actualizados += 1
 
         if actualizados == 0:
+            if ya_devueltos:
+                return jsonify({"error": "Los equipos de esta orden ya fueron devueltos a bodega"}), 409
             return jsonify({"error": "No hay equipos listos para devolver a bodega"}), 400
 
-        if str(orden.estado or "").lower() != "cerrado":
+        detalles_orden = list(orden.detalles or [])
+        devolucion_completa = bool(detalles_orden) and all(bool(d.disponible_bodega) for d in detalles_orden)
+        if devolucion_completa and str(orden.estado or "").lower() != "cerrado":
             orden.estado = "cerrado"
             orden.fecha_cierre = orden.fecha_cierre or datetime.utcnow()
+        elif not devolucion_completa:
+            orden.estado = "diagnosticado"
 
         db.session.commit()
         return jsonify({
