@@ -2,7 +2,7 @@ import os
 from flask import Blueprint, request, jsonify, send_file
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from zoneinfo import ZoneInfo
+import pytz
 from werkzeug.utils import secure_filename
 import jwt
 from sqlalchemy import or_
@@ -27,7 +27,7 @@ SECRET_KEY = "remoto753524"
 ALLOWED_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.pdf'}
 UPLOAD_FOLDER = os.path.join(os.getcwd(), 'uploads/inventarios_docs')
 try:
-    CHILE_TZ = ZoneInfo("America/Santiago")
+    CHILE_TZ = pytz.timezone("America/Santiago")
 except Exception:
     CHILE_TZ = timezone(timedelta(hours=-3))
 
