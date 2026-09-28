@@ -488,6 +488,9 @@ class Soporte(db.Model):
     prioridad = db.Column(db.String(20), nullable=False, default='media')  # 'alta' | 'media' | 'baja'
     estado = db.Column(db.String(20), default='pendiente')  # <---
     fecha_cierre = db.Column(db.Date, nullable=True)  
+    correo_enviado = db.Column(db.Boolean, nullable=True, default=False)
+    fecha_envio_correo = db.Column(db.DateTime(timezone=True), nullable=True)
+    correo_enviado_por = db.Column(db.String(120), nullable=True)
     case_code = db.Column(db.String(120), nullable=True)
     ismael_id_origen = db.Column(db.String(80), nullable=True)
 

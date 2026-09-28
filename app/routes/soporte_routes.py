@@ -1,9 +1,13 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from flask import Blueprint, request, jsonify
-from ..models import Soporte, Centro, Ismael, SoporteCaseTomado
+import jwt
+from sqlalchemy import or_
+
+from ..models import Soporte, Centro, Cliente, Ismael, SoporteCaseTomado, User
 from ..database import db
 from ..socketio_ext import emit_soporte_event
+from .auth_routes import SECRET_KEY
 
 soporte_blueprint = Blueprint('soporte', __name__)
 
@@ -52,6 +56,17 @@ def _iso_value(value):
 
 def _get_datetime_attr(obj, attr):
     return getattr(obj, attr, None)
+
+
+def _usuario_autenticado():
+    authorization = request.headers.get('Authorization', '')
+    if not authorization.startswith('Bearer '):
+        return None
+    try:
+        payload = jwt.decode(authorization[7:], SECRET_KEY, algorithms=['HS256'])
+        return User.query.get(payload.get('user_id'))
+    except Exception:
+        return None
 
 # Crear un nuevo registro de soporte
 @soporte_blueprint.route('/', methods=['POST'])
@@ -128,6 +143,9 @@ def obtener_soportes():
             "prioridad": soporte.prioridad or "media",
             "estado": soporte.estado,
             "fecha_cierre": _iso_value(soporte.fecha_cierre),
+            "correo_enviado": soporte.correo_enviado,
+            "fecha_envio_correo": _iso_value(soporte.fecha_envio_correo),
+            "correo_enviado_por": soporte.correo_enviado_por,
             "case_code": soporte.case_code,
             "ismael_id_origen": soporte.ismael_id_origen,
             "created_at": _iso_value(_get_datetime_attr(soporte, "created_at")),
@@ -135,6 +153,84 @@ def obtener_soportes():
         })
 
     return jsonify(resultado), 200
+
+
+@soporte_blueprint.route('/correos/historial', methods=['GET'])
+def obtener_historial_correos():
+    usuario = _usuario_autenticado()
+    if not usuario:
+        return jsonify({"error": "Sesion invalida o expirada."}), 401
+    if str(usuario.rol or '').strip().lower() != 'admin':
+        return jsonify({"error": "Solo un administrador puede consultar este historial."}), 403
+
+    try:
+        page = max(1, request.args.get('page', 1, type=int))
+        per_page = min(100, max(5, request.args.get('per_page', 10, type=int)))
+        query = (
+            Soporte.query
+            .join(Centro, Soporte.centro_id == Centro.id_centro)
+            .join(Cliente, Centro.cliente_id == Cliente.id_cliente)
+            .filter(Soporte.correo_enviado.is_(True))
+        )
+
+        fecha_desde = _parse_date(request.args.get('fecha_desde'))
+        fecha_hasta = _parse_date(request.args.get('fecha_hasta'))
+        fecha_envio_local = db.func.date(
+            db.func.timezone('America/Santiago', Soporte.fecha_envio_correo)
+        )
+        if fecha_desde:
+            query = query.filter(fecha_envio_local >= fecha_desde)
+        if fecha_hasta:
+            query = query.filter(fecha_envio_local <= fecha_hasta)
+
+        cliente = str(request.args.get('cliente') or '').strip()
+        centro = str(request.args.get('centro') or '').strip()
+        responsable = str(request.args.get('responsable') or '').strip()
+        tipo = str(request.args.get('tipo') or '').strip().lower()
+        busqueda = str(request.args.get('q') or '').strip()
+        if cliente:
+            query = query.filter(Cliente.nombre.ilike(f'%{cliente}%'))
+        if centro:
+            query = query.filter(Centro.nombre.ilike(f'%{centro}%'))
+        if responsable:
+            query = query.filter(Soporte.correo_enviado_por.ilike(f'%{responsable}%'))
+        if tipo in ('remoto', 'terreno'):
+            query = query.filter(Soporte.tipo == tipo)
+        if busqueda:
+            patron = f'%{busqueda}%'
+            query = query.filter(or_(
+                Cliente.nombre.ilike(patron),
+                Centro.nombre.ilike(patron),
+                Soporte.problema.ilike(patron),
+                Soporte.solucion.ilike(patron),
+                Soporte.correo_enviado_por.ilike(patron),
+            ))
+
+        paginado = query.order_by(Soporte.fecha_envio_correo.desc()).paginate(
+            page=page,
+            per_page=per_page,
+            error_out=False,
+        )
+        items = [{
+            "id_soporte": soporte.id_soporte,
+            "cliente": soporte.centro.cliente.nombre if soporte.centro and soporte.centro.cliente else None,
+            "centro": soporte.centro.nombre if soporte.centro else None,
+            "tipo": soporte.tipo,
+            "problema": soporte.problema,
+            "solucion": soporte.solucion,
+            "fecha_cierre": _iso_value(soporte.fecha_cierre),
+            "fecha_envio_correo": _iso_value(soporte.fecha_envio_correo),
+            "correo_enviado_por": soporte.correo_enviado_por,
+        } for soporte in paginado.items]
+        return jsonify({
+            "items": items,
+            "page": paginado.page,
+            "per_page": paginado.per_page,
+            "total": paginado.total,
+            "pages": paginado.pages,
+        }), 200
+    except ValueError:
+        return jsonify({"error": "El formato de las fechas debe ser AAAA-MM-DD."}), 400
 
 
 @soporte_blueprint.route('/ismael', methods=['GET'])
@@ -199,6 +295,7 @@ def obtener_casos_ismael():
 def actualizar_soporte(id_soporte):
     data = request.json
     soporte = Soporte.query.get_or_404(id_soporte)
+    estado_anterior = str(soporte.estado or '').lower()
 
     soporte.centro_id = data.get('centro_id', soporte.centro_id)
     soporte.problema = data.get('problema', soporte.problema)
@@ -223,6 +320,16 @@ def actualizar_soporte(id_soporte):
             return jsonify({"error": "Prioridad invalida. Use 'alta', 'media' o 'baja'."}), 400
         soporte.prioridad = prioridad
     soporte.estado = data.get('estado', soporte.estado)
+    estado_nuevo = str(soporte.estado or '').lower()
+    estados_resueltos = ('resuelto', 'finalizado')
+    if estado_nuevo in estados_resueltos and estado_anterior not in estados_resueltos:
+        soporte.correo_enviado = False
+        soporte.fecha_envio_correo = None
+        soporte.correo_enviado_por = None
+    elif estado_nuevo not in estados_resueltos and estado_anterior in estados_resueltos:
+        soporte.correo_enviado = None
+        soporte.fecha_envio_correo = None
+        soporte.correo_enviado_por = None
     if 'case_code' in data:
         soporte.case_code = data.get('case_code')
     if 'ismael_id_origen' in data:
@@ -241,6 +348,38 @@ def actualizar_soporte(id_soporte):
         "updated_at": _iso_value(_get_datetime_attr(soporte, "updated_at")),
     })
     return jsonify({"message": "Soporte actualizado exitosamente"}), 200
+
+
+@soporte_blueprint.route('/<int:id_soporte>/correo-enviado', methods=['PATCH'])
+def marcar_correo_enviado(id_soporte):
+    usuario = _usuario_autenticado()
+    if not usuario:
+        return jsonify({"error": "Sesion invalida o expirada."}), 401
+
+    soporte = Soporte.query.get_or_404(id_soporte)
+    if str(soporte.estado or '').lower() not in ('resuelto', 'finalizado'):
+        return jsonify({"error": "El correo solo puede confirmarse en un soporte resuelto."}), 409
+
+    if not soporte.correo_enviado:
+        soporte.correo_enviado = True
+        soporte.fecha_envio_correo = datetime.now(timezone.utc)
+        soporte.correo_enviado_por = usuario.name
+        db.session.commit()
+
+    emit_soporte_event("soporte_updated", {
+        "action": "correo_enviado",
+        "id_soporte": soporte.id_soporte,
+        "estado": soporte.estado,
+        "centro_id": soporte.centro_id,
+        "correo_enviado": True,
+        "fecha_envio_correo": _iso_value(soporte.fecha_envio_correo),
+    })
+    return jsonify({
+        "message": "Correo marcado como enviado.",
+        "correo_enviado": True,
+        "fecha_envio_correo": _iso_value(soporte.fecha_envio_correo),
+        "correo_enviado_por": soporte.correo_enviado_por,
+    }), 200
 
 # Eliminar un registro de soporte
 @soporte_blueprint.route('/<int:id_soporte>', methods=['DELETE'])

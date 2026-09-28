@@ -413,6 +413,10 @@ def create_app():
                 """
             )
         )
+        # Sin DEFAULT para no convertir soportes historicos en correos pendientes.
+        _schema_exec(text("ALTER TABLE soporte ADD COLUMN IF NOT EXISTS correo_enviado BOOLEAN"))
+        _schema_exec(text("ALTER TABLE soporte ADD COLUMN IF NOT EXISTS fecha_envio_correo TIMESTAMP WITH TIME ZONE"))
+        _schema_exec(text("ALTER TABLE soporte ADD COLUMN IF NOT EXISTS correo_enviado_por VARCHAR(120)"))
         _schema_exec(
             text(
                 """
