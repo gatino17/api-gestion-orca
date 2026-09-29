@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 from flask import Blueprint, request, jsonify
 import jwt
-from sqlalchemy import or_
+from sqlalchemy import or_, text
 
 from ..models import Soporte, Centro, Cliente, Ismael, SoporteCaseTomado, User
 from ..database import db
@@ -38,6 +38,15 @@ def _ismael_id_ya_tomado(ismael_id=None):
     if SoporteCaseTomado.query.filter_by(ismael_id=source_id).first():
         return True
     return Soporte.query.filter_by(ismael_id_origen=source_id).first() is not None
+
+
+def _case_code_ya_tomado(case_code=None):
+    code = str(case_code or "").strip()
+    if not code:
+        return False
+    if SoporteCaseTomado.query.filter_by(case_code=code).first():
+        return True
+    return Soporte.query.filter_by(case_code=code).first() is not None
 
 
 def _parse_date(value):
@@ -81,6 +90,9 @@ def crear_soporte():
     ismael_id_origen = data.get('ismael_id_origen')
     if _ismael_id_ya_tomado(ismael_id_origen):
         return jsonify({"error": "Este caso de ismael ya fue tomado para soporte."}), 409
+    case_code = data.get('case_code')
+    if str(case_code or '').startswith('device-fail:') and _case_code_ya_tomado(case_code):
+        return jsonify({"error": "Esta alerta de dispositivo ya fue tomada para soporte."}), 409
 
     nuevo_soporte = Soporte(
         centro_id=data.get('centro_id'),
@@ -97,7 +109,7 @@ def crear_soporte():
         prioridad=prioridad,
         estado=data.get('estado', 'pendiente'),
         fecha_cierre=_parse_date(data.get('fecha_cierre')),
-        case_code=data.get('case_code'),
+        case_code=case_code,
         ismael_id_origen=ismael_id_origen
     )
 
@@ -289,6 +301,81 @@ def obtener_casos_ismael():
         return jsonify(data), 200
     except Exception as e:
         return jsonify({"error": f"Error al obtener casos de ismael: {str(e)}"}), 500
+
+
+@soporte_blueprint.route('/fallas-dispositivos', methods=['GET'])
+def obtener_fallas_dispositivos():
+    fuentes = (
+        ('reportefailaqua', 'aquachile', 'Aquachile'),
+        ('reportefailcbay', 'caleta-bay', 'Caleta Bay'),
+        ('reportefailsaysen', 'salmones-aysen', 'Salmones Aysen'),
+    )
+    try:
+        limit = request.args.get('limit', default=200, type=int)
+        limit = min(max(limit or 200, 1), 500)
+        codigos_tomados = {
+            str(item.case_code).strip().lower()
+            for item in SoporteCaseTomado.query.with_entities(SoporteCaseTomado.case_code).all()
+            if str(item.case_code or '').strip()
+        }
+        codigos_tomados.update(
+            str(item.case_code).strip().lower()
+            for item in Soporte.query.with_entities(Soporte.case_code).all()
+            if str(item.case_code or '').strip()
+        )
+
+        resultados = []
+        for tabla, fuente, cliente in fuentes:
+            existe = db.session.execute(
+                text("SELECT to_regclass(:tabla)"), {"tabla": tabla}
+            ).scalar()
+            if not existe:
+                continue
+
+            consulta = text(f"""
+                SELECT id, entity_type, router_id, id_site, device_name, target_ip,
+                       check_type, offline_since, recovered_at, duration_s, source_id, created_at
+                FROM {tabla}
+                WHERE recovered_at IS NULL
+                  AND offline_since IS NOT NULL
+                  AND offline_since <= NOW() - INTERVAL '5 minutes'
+                ORDER BY offline_since DESC NULLS LAST, created_at DESC NULLS LAST
+                LIMIT :limit
+            """)
+            rows = db.session.execute(consulta, {"limit": limit}).mappings().all()
+            for row in rows:
+                codigo_origen = f"device-fail:{fuente}:{row['id']}"
+                if codigo_origen.lower() in codigos_tomados:
+                    continue
+                centro = str(row['router_id'] or row['device_name'] or '').strip()
+                resultados.append({
+                    "id": row['id'],
+                    "source_key": codigo_origen,
+                    "fuente": fuente,
+                    "cliente": cliente,
+                    "centro": centro,
+                    "entity_type": row['entity_type'],
+                    "router_id": row['router_id'],
+                    "id_site": row['id_site'],
+                    "device_name": row['device_name'],
+                    "target_ip": row['target_ip'],
+                    "check_type": row['check_type'],
+                    "offline_since": _iso_value(row['offline_since']),
+                    "recovered_at": _iso_value(row['recovered_at']),
+                    "duration_s": row['duration_s'],
+                    "source_id": row['source_id'],
+                    "created_at": _iso_value(row['created_at']),
+                    "estado": "recuperado" if row['recovered_at'] else "activo",
+                })
+
+        resultados.sort(key=lambda item: (
+            item['estado'] != 'activo',
+            -(datetime.fromisoformat(item['offline_since']).timestamp()
+              if item.get('offline_since') else 0),
+        ))
+        return jsonify(resultados[:limit]), 200
+    except Exception as e:
+        return jsonify({"error": f"Error al obtener fallas de dispositivos: {str(e)}"}), 500
 
 # Actualizar un registro de soporte
 @soporte_blueprint.route('/<int:id_soporte>', methods=['PUT'])
