@@ -82,22 +82,31 @@ def _usuario_autenticado():
 def crear_soporte():
     data = request.json
     origen = str(data.get('origen', 'cliente')).lower().strip()
-    if origen not in ('cliente', 'orca'):
-        return jsonify({"error": "Origen invalido. Use 'cliente' u 'orca'."}), 400
+    if origen not in ('cliente', 'orca', 'terceros'):
+        return jsonify({"error": "Origen invalido. Use 'cliente', 'orca' o 'terceros'."}), 400
     prioridad = str(data.get('prioridad', 'media')).lower().strip()
     if prioridad not in ('alta', 'media', 'baja'):
         return jsonify({"error": "Prioridad invalida. Use 'alta', 'media' o 'baja'."}), 400
+    tipo = str(data.get('tipo') or '').lower().strip()
+    if tipo not in ('terreno', 'remoto'):
+        return jsonify({"error": "Tipo invalido. Use 'terreno' o 'remoto'."}), 400
     ismael_id_origen = data.get('ismael_id_origen')
     if _ismael_id_ya_tomado(ismael_id_origen):
         return jsonify({"error": "Este caso de ismael ya fue tomado para soporte."}), 409
     case_code = data.get('case_code')
-    if str(case_code or '').startswith('device-fail:') and _case_code_ya_tomado(case_code):
+    external_case_key = str(data.get('external_case_key') or '').strip()
+    if external_case_key and not external_case_key.startswith('device-fail:'):
+        return jsonify({"error": "Referencia de alerta externa invalida."}), 400
+    tracking_code = external_case_key or (
+        str(case_code).strip() if str(case_code or '').startswith('device-fail:') else ''
+    )
+    if tracking_code and _case_code_ya_tomado(tracking_code):
         return jsonify({"error": "Esta alerta de dispositivo ya fue tomada para soporte."}), 409
 
     nuevo_soporte = Soporte(
         centro_id=data.get('centro_id'),
         problema=data.get('problema'),
-        tipo=data.get('tipo'),  # "terreno" o "remoto"
+        tipo=tipo,
         fecha_soporte=_parse_date(data.get('fecha_soporte')),
         solucion=data.get('solucion'),
         categoria_falla=data.get('categoria_falla'),
@@ -109,12 +118,14 @@ def crear_soporte():
         prioridad=prioridad,
         estado=data.get('estado', 'pendiente'),
         fecha_cierre=_parse_date(data.get('fecha_cierre')),
-        case_code=case_code,
+        case_code=None if external_case_key else case_code,
         ismael_id_origen=ismael_id_origen
     )
 
     db.session.add(nuevo_soporte)
     _registrar_case_tomado(nuevo_soporte.case_code, nuevo_soporte.ismael_id_origen)
+    if external_case_key:
+        _registrar_case_tomado(external_case_key)
     db.session.commit()
     emit_soporte_event("soporte_updated", {
         "action": "created",
@@ -377,6 +388,54 @@ def obtener_fallas_dispositivos():
     except Exception as e:
         return jsonify({"error": f"Error al obtener fallas de dispositivos: {str(e)}"}), 500
 
+
+@soporte_blueprint.route('/casos-externos/<origen>/<case_id>', methods=['DELETE'])
+def eliminar_caso_externo(origen, case_id):
+    usuario = _usuario_autenticado()
+    if not usuario:
+        return jsonify({"error": "Sesion invalida o expirada."}), 401
+    if str(usuario.rol or '').strip().lower() != 'admin':
+        return jsonify({"error": "Solo un administrador puede eliminar casos externos."}), 403
+
+    tablas_dispositivos = {
+        'aquachile': 'reportefailaqua',
+        'caleta-bay': 'reportefailcbay',
+        'salmones-aysen': 'reportefailsaysen',
+    }
+    try:
+        origen_normalizado = str(origen or '').strip().lower()
+        if origen_normalizado == 'ismael':
+            caso = db.session.get(Ismael, case_id)
+            if not caso:
+                return jsonify({"error": "El mensaje de Ismael ya no existe."}), 404
+            db.session.delete(caso)
+        elif origen_normalizado in tablas_dispositivos:
+            try:
+                id_dispositivo = int(case_id)
+            except (TypeError, ValueError):
+                return jsonify({"error": "Identificador de alerta invalido."}), 400
+            tabla = tablas_dispositivos[origen_normalizado]
+            resultado = db.session.execute(
+                text(f"DELETE FROM {tabla} WHERE id = :id"),
+                {"id": id_dispositivo},
+            )
+            if not resultado.rowcount:
+                db.session.rollback()
+                return jsonify({"error": "La alerta de dispositivo ya no existe."}), 404
+        else:
+            return jsonify({"error": "Origen de caso externo invalido."}), 400
+
+        db.session.commit()
+        emit_soporte_event("soporte_updated", {
+            "action": "external_case_deleted",
+            "origen": origen_normalizado,
+            "case_id": case_id,
+        })
+        return jsonify({"message": "Caso eliminado correctamente."}), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": f"No se pudo eliminar el caso: {str(e)}"}), 500
+
 # Actualizar un registro de soporte
 @soporte_blueprint.route('/<int:id_soporte>', methods=['PUT'])
 def actualizar_soporte(id_soporte):
@@ -386,7 +445,11 @@ def actualizar_soporte(id_soporte):
 
     soporte.centro_id = data.get('centro_id', soporte.centro_id)
     soporte.problema = data.get('problema', soporte.problema)
-    soporte.tipo = data.get('tipo', soporte.tipo)
+    if 'tipo' in data:
+        tipo = str(data.get('tipo') or '').lower().strip()
+        if tipo not in ('terreno', 'remoto'):
+            return jsonify({"error": "Tipo invalido. Use 'terreno' o 'remoto'."}), 400
+        soporte.tipo = tipo
     if 'fecha_soporte' in data:
         soporte.fecha_soporte = _parse_date(data.get('fecha_soporte'))
     soporte.solucion = data.get('solucion', soporte.solucion)
@@ -398,8 +461,8 @@ def actualizar_soporte(id_soporte):
     soporte.equipo_cambiado = data.get('equipo_cambiado', soporte.equipo_cambiado)
     if 'origen' in data:
         origen = str(data.get('origen', 'cliente')).lower().strip()
-        if origen not in ('cliente', 'orca'):
-            return jsonify({"error": "Origen invalido. Use 'cliente' u 'orca'."}), 400
+        if origen not in ('cliente', 'orca', 'terceros'):
+            return jsonify({"error": "Origen invalido. Use 'cliente', 'orca' o 'terceros'."}), 400
         soporte.origen = origen
     if 'prioridad' in data:
         prioridad = str(data.get('prioridad', 'media')).lower().strip()

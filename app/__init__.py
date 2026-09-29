@@ -413,6 +413,28 @@ def create_app():
                 """
             )
         )
+        _schema_exec(
+            text(
+                """
+                DO $$
+                DECLARE tipo_check TEXT;
+                BEGIN
+                    SELECT pg_get_constraintdef(oid)
+                    INTO tipo_check
+                    FROM pg_constraint
+                    WHERE conrelid = 'soporte'::regclass
+                      AND conname = 'soporte_tipo_check';
+
+                    IF tipo_check IS NULL OR POSITION('terceros' IN LOWER(tipo_check)) > 0 THEN
+                        ALTER TABLE soporte DROP CONSTRAINT IF EXISTS soporte_tipo_check;
+                        ALTER TABLE soporte
+                        ADD CONSTRAINT soporte_tipo_check
+                        CHECK (tipo IN ('terreno', 'remoto'));
+                    END IF;
+                END $$;
+                """
+            )
+        )
         # Sin DEFAULT para no convertir soportes historicos en correos pendientes.
         _schema_exec(text("ALTER TABLE soporte ADD COLUMN IF NOT EXISTS correo_enviado BOOLEAN"))
         _schema_exec(text("ALTER TABLE soporte ADD COLUMN IF NOT EXISTS fecha_envio_correo TIMESTAMP WITH TIME ZONE"))

@@ -133,6 +133,8 @@ def get_centros():
         'fecha_instalacion': centro.fecha_instalacion,
         'fecha_activacion': centro.fecha_activacion,
         'fecha_termino': centro.fecha_termino,
+        'cliente_id': centro.cliente_id,
+        'razon_social_id': centro.razon_social_id,
         'cliente': centro.cliente.nombre if centro.cliente else "N/A",
         'razon_social': centro.razon_social.razon_social if centro.razon_social else "N/A",
         'nombre_ponton': centro.nombre_ponton,
