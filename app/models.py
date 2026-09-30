@@ -98,6 +98,28 @@ class Centro(db.Model):
 
     def __repr__(self):
         return f"<Centro {self.nombre}>"
+
+
+class DiagramaPlantilla(db.Model):
+    __tablename__ = 'diagrama_plantillas'
+
+    id_plantilla = db.Column(db.Integer, primary_key=True)
+    nombre = db.Column(db.String(120), nullable=False)
+    descripcion = db.Column(db.Text, nullable=True)
+    alcance = db.Column(db.String(20), nullable=False, default='general')
+    cliente_id = db.Column(db.Integer, db.ForeignKey('clientes.id_cliente', ondelete='SET NULL'), nullable=True, index=True)
+    centro_id = db.Column(db.BigInteger, db.ForeignKey('centros.id_centro', ondelete='SET NULL'), nullable=True, index=True)
+    imagen_general = db.Column(db.String(255), nullable=True)
+    vista_general_json = db.Column(db.Text, nullable=True, default='{}')
+    diagrama_logico_json = db.Column(db.Text, nullable=True, default='{}')
+    estado = db.Column(db.String(20), nullable=False, default='activo')
+    creado_por_id = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    cliente = db.relationship('Cliente', foreign_keys=[cliente_id])
+    centro = db.relationship('Centro', foreign_keys=[centro_id])
+    creado_por = db.relationship('User', foreign_keys=[creado_por_id])
     
 
 #tabla equipos y conecxion especiales

@@ -45,6 +45,7 @@ from .routes.roles_routes import roles_blueprint
 from .routes.tecnico_bloqueos_routes import tecnico_bloqueos_blueprint
 from .routes.revision_equipos_routes import revision_equipos_blueprint
 from .routes.rendiciones_routes import rendiciones_blueprint
+from .routes.diagramas_routes import diagramas_blueprint
 from .permissions import seed_default_roles
 
 
@@ -125,6 +126,7 @@ def create_app():
     app.register_blueprint(tecnico_bloqueos_blueprint, url_prefix='/api/tecnico_bloqueos')
     app.register_blueprint(revision_equipos_blueprint, url_prefix='/api/revision_equipos')
     app.register_blueprint(rendiciones_blueprint, url_prefix='/api/rendiciones')
+    app.register_blueprint(diagramas_blueprint, url_prefix='/api/diagramas')
       
     
   # Ruta para servir archivos desde la carpeta `uploads`
