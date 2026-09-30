@@ -202,8 +202,8 @@ def _normalizar_vista_general(payload):
         try:
             x = min(100.0, max(0.0, float(zona.get('x', 40))))
             y = min(100.0, max(0.0, float(zona.get('y', 40))))
-            ancho = min(100.0, max(5.0, float(zona.get('ancho', 20))))
-            alto = min(100.0, max(5.0, float(zona.get('alto', 15))))
+            ancho = min(100.0, max(2.0, float(zona.get('ancho', 20))))
+            alto = min(100.0, max(2.0, float(zona.get('alto', 15))))
             opacidad = min(0.8, max(0.0, float(zona.get('opacidad', 0.2))))
         except (TypeError, ValueError):
             raise ValueError('Las dimensiones de una zona no son validas.')
