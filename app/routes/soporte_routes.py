@@ -345,11 +345,13 @@ def obtener_fallas_dispositivos():
 
             consulta = text(f"""
                 SELECT id, entity_type, router_id, id_site, device_name, target_ip,
-                       check_type, offline_since, recovered_at, duration_s, source_id, created_at
+                       check_type, offline_since, recovered_at, duration_s, source_id, created_at,
+                       baja_at
                 FROM {tabla}
                 WHERE recovered_at IS NULL
                   AND offline_since IS NOT NULL
                   AND offline_since <= NOW() - INTERVAL '5 minutes'
+                  AND baja_at IS NULL
                 ORDER BY offline_since DESC NULLS LAST, created_at DESC NULLS LAST
                 LIMIT :limit
             """)
@@ -376,6 +378,7 @@ def obtener_fallas_dispositivos():
                     "duration_s": row['duration_s'],
                     "source_id": row['source_id'],
                     "created_at": _iso_value(row['created_at']),
+                    "baja_at": _iso_value(row['baja_at']),
                     "estado": "recuperado" if row['recovered_at'] else "activo",
                 })
 
