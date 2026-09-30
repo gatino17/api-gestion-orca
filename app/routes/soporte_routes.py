@@ -119,7 +119,8 @@ def crear_soporte():
         estado=data.get('estado', 'pendiente'),
         fecha_cierre=_parse_date(data.get('fecha_cierre')),
         case_code=None if external_case_key else case_code,
-        ismael_id_origen=ismael_id_origen
+        ismael_id_origen=ismael_id_origen,
+        external_case_key=external_case_key or None
     )
 
     db.session.add(nuevo_soporte)
@@ -171,6 +172,7 @@ def obtener_soportes():
             "correo_enviado_por": soporte.correo_enviado_por,
             "case_code": soporte.case_code,
             "ismael_id_origen": soporte.ismael_id_origen,
+            "external_case_key": soporte.external_case_key,
             "created_at": _iso_value(_get_datetime_attr(soporte, "created_at")),
             "updated_at": _iso_value(_get_datetime_attr(soporte, "updated_at"))
         })
@@ -487,7 +489,14 @@ def actualizar_soporte(id_soporte):
         soporte.case_code = data.get('case_code')
     if 'ismael_id_origen' in data:
         soporte.ismael_id_origen = data.get('ismael_id_origen')
+    if 'external_case_key' in data:
+        external_case_key = str(data.get('external_case_key') or '').strip()
+        if external_case_key and not external_case_key.startswith('device-fail:'):
+            return jsonify({"error": "Referencia de alerta externa invalida."}), 400
+        soporte.external_case_key = external_case_key or None
     _registrar_case_tomado(soporte.case_code, soporte.ismael_id_origen)
+    if soporte.external_case_key:
+        _registrar_case_tomado(soporte.external_case_key)
     if 'fecha_cierre' in data:
         soporte.fecha_cierre = _parse_date(data.get('fecha_cierre'))
 
@@ -545,6 +554,8 @@ def eliminar_soporte(id_soporte):
         "centro_id": soporte.centro_id,
     }
     _registrar_case_tomado(soporte.case_code, soporte.ismael_id_origen)
+    if soporte.external_case_key:
+        _registrar_case_tomado(soporte.external_case_key)
     db.session.delete(soporte)
     db.session.commit()
     emit_soporte_event("soporte_updated", payload)

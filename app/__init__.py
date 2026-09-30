@@ -395,6 +395,14 @@ def create_app():
             text(
                 """
                 ALTER TABLE soporte
+                ADD COLUMN IF NOT EXISTS external_case_key VARCHAR(160)
+                """
+            )
+        )
+        _schema_exec(
+            text(
+                """
+                ALTER TABLE soporte
                 ADD COLUMN IF NOT EXISTS subcategoria_falla VARCHAR(80)
                 """
             )
