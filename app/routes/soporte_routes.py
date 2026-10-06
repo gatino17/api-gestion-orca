@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import hashlib
 
 from flask import Blueprint, request, jsonify
 import jwt
@@ -12,7 +13,7 @@ from .auth_routes import SECRET_KEY
 soporte_blueprint = Blueprint('soporte', __name__)
 
 
-def _registrar_case_tomado(case_code=None, ismael_id=None):
+def _registrar_case_tomado(case_code=None, ismael_id=None, origen='ismael'):
     source_id = str(ismael_id or "").strip()
     code = str(case_code or "").strip()
 
@@ -20,7 +21,7 @@ def _registrar_case_tomado(case_code=None, ismael_id=None):
         exists = SoporteCaseTomado.query.filter_by(ismael_id=source_id).first()
         if exists:
             return
-        db.session.add(SoporteCaseTomado(case_code=None, ismael_id=source_id, origen='ismael'))
+        db.session.add(SoporteCaseTomado(case_code=None, ismael_id=source_id, origen=origen))
         return
 
     if not code:
@@ -28,7 +29,22 @@ def _registrar_case_tomado(case_code=None, ismael_id=None):
     exists = SoporteCaseTomado.query.filter_by(case_code=code).first()
     if exists:
         return
-    db.session.add(SoporteCaseTomado(case_code=code, ismael_id=None, origen='ismael'))
+    db.session.add(SoporteCaseTomado(case_code=code, ismael_id=None, origen=origen))
+
+
+def _clave_falla_dispositivo(fuente, row):
+    """Genera una referencia estable aunque el importador cambie el ID local."""
+    partes = (
+        fuente,
+        row.get('source_id'),
+        row.get('offline_since'),
+        row.get('target_ip'),
+        row.get('check_type'),
+        row.get('router_id'),
+        row.get('device_name'),
+    )
+    huella = hashlib.sha256('|'.join(str(valor or '').strip().lower() for valor in partes).encode('utf-8')).hexdigest()[:32]
+    return f"device-fail:{fuente}:incident:{huella}"
 
 
 def _ismael_id_ya_tomado(ismael_id=None):
@@ -276,6 +292,16 @@ def obtener_casos_ismael():
             for item in Soporte.query.with_entities(Soporte.ismael_id_origen).all()
             if str(item.ismael_id_origen or "").strip()
         )
+        codigos_tomados = {
+            str(item.case_code).strip().lower()
+            for item in SoporteCaseTomado.query.with_entities(SoporteCaseTomado.case_code).all()
+            if str(item.case_code or "").strip()
+        }
+        codigos_tomados.update(
+            str(item.case_code).strip().lower()
+            for item in Soporte.query.with_entities(Soporte.case_code).all()
+            if str(item.case_code or "").strip()
+        )
 
         rows = (
             Ismael.query
@@ -287,7 +313,8 @@ def obtener_casos_ismael():
         data = []
         for row in rows:
             row_id = str(row.id or "").strip().lower()
-            if row_id and row_id in ids_tomados:
+            row_case_code = str(row.case_code or "").strip().lower()
+            if (row_id and row_id in ids_tomados) or (row_case_code and row_case_code in codigos_tomados):
                 continue
             data.append({
                 "id": row.id,
@@ -359,8 +386,9 @@ def obtener_fallas_dispositivos():
             """)
             rows = db.session.execute(consulta, {"limit": limit}).mappings().all()
             for row in rows:
-                codigo_origen = f"device-fail:{fuente}:{row['id']}"
-                if codigo_origen.lower() in codigos_tomados:
+                codigo_legacy = f"device-fail:{fuente}:{row['id']}"
+                codigo_origen = _clave_falla_dispositivo(fuente, row)
+                if codigo_legacy.lower() in codigos_tomados or codigo_origen.lower() in codigos_tomados:
                     continue
                 centro = str(row['router_id'] or row['device_name'] or '').strip()
                 resultados.append({
@@ -413,6 +441,9 @@ def eliminar_caso_externo(origen, case_id):
             caso = db.session.get(Ismael, case_id)
             if not caso:
                 return jsonify({"error": "El mensaje de Ismael ya no existe."}), 404
+            _registrar_case_tomado(ismael_id=caso.id, origen='ismael')
+            if str(caso.case_code or '').strip():
+                _registrar_case_tomado(case_code=caso.case_code, origen='ismael')
             db.session.delete(caso)
         elif origen_normalizado in tablas_dispositivos:
             try:
@@ -420,6 +451,25 @@ def eliminar_caso_externo(origen, case_id):
             except (TypeError, ValueError):
                 return jsonify({"error": "Identificador de alerta invalido."}), 400
             tabla = tablas_dispositivos[origen_normalizado]
+            caso = db.session.execute(
+                text(f"""
+                    SELECT id, source_id, offline_since, target_ip, check_type, router_id, device_name
+                    FROM {tabla}
+                    WHERE id = :id
+                """),
+                {"id": id_dispositivo},
+            ).mappings().first()
+            if not caso:
+                return jsonify({"error": "La alerta de dispositivo ya no existe."}), 404
+
+            _registrar_case_tomado(
+                case_code=f"device-fail:{origen_normalizado}:{id_dispositivo}",
+                origen=origen_normalizado,
+            )
+            _registrar_case_tomado(
+                case_code=_clave_falla_dispositivo(origen_normalizado, caso),
+                origen=origen_normalizado,
+            )
             resultado = db.session.execute(
                 text(f"DELETE FROM {tabla} WHERE id = :id"),
                 {"id": id_dispositivo},
