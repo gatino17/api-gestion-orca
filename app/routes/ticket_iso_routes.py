@@ -126,7 +126,10 @@ def _validar(data, ticket=None):
     recepcion = _fecha_dia(data.get('fecha_recepcion'), 'Indica una fecha de recepcion valida.')
     responsable_id = ticket.responsable_id if ticket else None
     responsable_nombre = ticket.responsable_nombre if ticket else None
-    if 'responsable_id' in data:
+    if 'responsable' in data:
+        responsable_id = None
+        responsable_nombre = _texto(data, 'responsable', 100)
+    elif 'responsable_id' in data:
         valor = data['responsable_id']
         responsable_id, responsable_nombre = None, None
         if valor not in (None, ''):

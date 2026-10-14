@@ -130,6 +130,7 @@ class TicketISOTest(unittest.TestCase):
             {'estado': 'desconocido'}, {'fecha_recepcion': '2026-10-14T09:30'},
             {'fecha_recepcion': '2026-02-30'}, {'fecha_recepcion': None},
             {'responsable_id': True}, {'responsable_id': 999}, {'responsable_id': -1}, {'responsable_id': 1.5},
+            {'responsable': 123}, {'responsable': 'x' * 101},
             {'observaciones': 'x' * 10001}, {'observaciones': 123},
             {'estado': 'resuelto', 'fecha_cierre': ''}, {'estado': 'resuelto', 'fecha_cierre': '2026-02-30'},
             {'estado': 'resuelto', 'fecha_cierre': '2026-10-13'}, {'fecha_cierre': '2026-10-13'},
@@ -185,6 +186,25 @@ class TicketISOTest(unittest.TestCase):
         response = self.client.put(url, json={**self.payload, 'responsable_id': None, 'observaciones': ''}, headers=self.admin)
         self.assertIsNone(response.get_json()['ticket']['responsable_id'])
         self.assertIsNone(response.get_json()['ticket']['observaciones'])
+
+    def test_responsible_accepts_free_text_and_keeps_existing_names_when_editing(self):
+        response = self.create(responsable='  Carolina proveedor externo  ')
+        self.assertEqual(response.status_code, 201)
+        ticket = response.get_json()['ticket']
+        self.assertEqual(ticket['responsable'], 'Carolina proveedor externo')
+        self.assertIsNone(ticket['responsable_id'])
+        url = '/api/ticket-iso/' + str(ticket['id_ticket'])
+        response = self.client.put(url, json=self.payload, headers=self.admin)
+        self.assertEqual(response.get_json()['ticket']['responsable'], 'Carolina proveedor externo')
+        response = self.client.put(url, json={**self.payload, 'responsable': 'Auditor independiente'}, headers=self.admin)
+        self.assertEqual(response.get_json()['ticket']['responsable'], 'Auditor independiente')
+        response = self.client.put(url, json={**self.payload, 'responsable': ''}, headers=self.admin)
+        self.assertIsNone(response.get_json()['ticket']['responsable'])
+        anterior = self.create(numero_ticket='ANTERIOR', responsable_id=self.encargado_id).get_json()['ticket']
+        response = self.client.put('/api/ticket-iso/' + str(anterior['id_ticket']), json={**self.payload,
+            'numero_ticket': 'ANTERIOR', 'responsable': anterior['responsable']}, headers=self.admin)
+        self.assertEqual(response.get_json()['ticket']['responsable'], 'Jorge')
+        self.assertIsNone(response.get_json()['ticket']['responsable_id'])
 
     def test_editing_same_closing_day_does_not_erase_existing_timestamp(self):
         ticket = self.create(estado='resuelto', fecha_recepcion='2020-01-01').get_json()['ticket']
