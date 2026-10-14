@@ -1,5 +1,5 @@
 ﻿from .database import db
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import Enum
 from sqlalchemy import LargeBinary
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -529,6 +529,42 @@ class Soporte(db.Model):
             f"categoria_falla='{self.categoria_falla}', subcategoria_falla='{self.subcategoria_falla}', permiso_trabajo={self.permiso_trabajo}, cambio_equipo={self.cambio_equipo}, "
             f"equipo_cambiado='{self.equipo_cambiado}', origen='{self.origen}', prioridad='{self.prioridad}', estado='{self.estado}', fecha_cierre={self.fecha_cierre})>"
         )
+
+
+class TicketISO(db.Model):
+    __tablename__ = 'tickets_iso'
+
+    id_ticket = db.Column(db.Integer, primary_key=True)
+    numero_ticket = db.Column(db.String(120), nullable=False, unique=True)
+    fecha_recepcion = db.Column(db.DateTime(timezone=True), nullable=False)
+    cliente_id = db.Column(db.Integer, db.ForeignKey('clientes.id_cliente', ondelete='SET NULL'), nullable=True)
+    centro_id = db.Column(db.BigInteger, db.ForeignKey('centros.id_centro', ondelete='SET NULL'), nullable=True)
+    cliente_nombre = db.Column(db.String(100), nullable=False)
+    centro_nombre = db.Column(db.String(100), nullable=False)
+    area = db.Column(db.String(50), nullable=True)
+    equipo_afectado = db.Column(db.String(160), nullable=True)
+    asunto_procedimiento = db.Column(db.String(250), nullable=True)
+    origen = db.Column(db.String(50), nullable=True)
+    categoria_procedimiento = db.Column(db.String(60), nullable=True)
+    observaciones = db.Column(db.Text, nullable=True)
+    problema = db.Column(db.Text, nullable=False)
+    responsable_id = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    responsable_nombre = db.Column(db.String(100), nullable=True)
+    prioridad = db.Column(db.String(20), nullable=False, default='media')
+    estado = db.Column(db.String(30), nullable=False, default='pendiente')
+    solucion = db.Column(db.Text, nullable=True)
+    fecha_cierre = db.Column(db.DateTime(timezone=True), nullable=True)
+    creado_por_id = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    creado_por_nombre = db.Column(db.String(120), nullable=True)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+
+class TicketISOContador(db.Model):
+    __tablename__ = 'tickets_iso_contador'
+
+    id = db.Column(db.Integer, primary_key=True)
+    valor = db.Column(db.BigInteger, nullable=False, default=0)
 
 
 class Ismael(db.Model):

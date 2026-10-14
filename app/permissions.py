@@ -5,6 +5,7 @@ AVAILABLE_PAGES = [
     {"key": "inicio", "label": "Inicio", "route": "/"},
     {"key": "consulta_centro", "label": "Consulta de centros", "route": "/consulta-centro"},
     {"key": "soporte", "label": "Soporte", "route": "/soporte"},
+    {"key": "ticket_iso", "label": "Ticket ISO", "route": "/ticket-iso"},
     {"key": "soporte_detalle", "label": "Detalle de soporte", "route": "/soporte/detalle"},
     {"key": "mantencion_preventiva", "label": "Mantencion preventiva", "route": "/mantencion-preventiva"},
     {"key": "informes_centros", "label": "Informes centros", "route": "/informes-centros"},

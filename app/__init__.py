@@ -34,6 +34,7 @@ from .routes.filtro_routes import filtro_blueprint
 
 from .routes.actas_routes import actas_blueprint
 from .routes.soporte_routes import soporte_blueprint
+from .routes.ticket_iso_routes import ticket_iso_blueprint
 from .routes.consultascentro_historial_routes import consultascentro_historial_bp
 from .routes.armados_routes import armados_blueprint
 from .routes.actas_entrega_routes import actas_entrega_blueprint
@@ -115,6 +116,7 @@ def create_app():
     app.register_blueprint(actas_blueprint, url_prefix='/api/actas')
 
     app.register_blueprint(soporte_blueprint, url_prefix='/api/soporte')
+    app.register_blueprint(ticket_iso_blueprint, url_prefix='/api/ticket-iso')
     app.register_blueprint(consultascentro_historial_bp, url_prefix='/api/consultas_centro')
     app.register_blueprint(armados_blueprint, url_prefix='/api/armados')
     app.register_blueprint(actas_entrega_blueprint, url_prefix='/api/actas_entrega')
@@ -170,6 +172,10 @@ def create_app():
 
         if not migration_lock_ok:
             print("[schema] migraciones automaticas omitidas: otro proceso mantiene el lock de esquema")
+        _schema_exec(text("ALTER TABLE tickets_iso ADD COLUMN IF NOT EXISTS asunto_procedimiento VARCHAR(250)"))
+        _schema_exec(text("ALTER TABLE tickets_iso ADD COLUMN IF NOT EXISTS origen VARCHAR(50)"))
+        _schema_exec(text("ALTER TABLE tickets_iso ADD COLUMN IF NOT EXISTS categoria_procedimiento VARCHAR(60)"))
+        _schema_exec(text("ALTER TABLE tickets_iso ADD COLUMN IF NOT EXISTS observaciones TEXT"))
         # Compat de esquema: snapshot de numero_serie por movimiento de caja.
         _schema_exec(
             text(
