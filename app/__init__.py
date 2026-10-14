@@ -399,6 +399,8 @@ def create_app():
                 """
             )
         )
+        _schema_exec(text("ALTER TABLE soporte ADD COLUMN IF NOT EXISTS creado_por_id INTEGER REFERENCES users(id) ON DELETE SET NULL"))
+        _schema_exec(text("ALTER TABLE soporte ADD COLUMN IF NOT EXISTS creado_por_nombre VARCHAR(120)"))
         _schema_exec(
             text(
                 """

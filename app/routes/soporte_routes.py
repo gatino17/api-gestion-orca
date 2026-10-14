@@ -96,6 +96,9 @@ def _usuario_autenticado():
 # Crear un nuevo registro de soporte
 @soporte_blueprint.route('/', methods=['POST'])
 def crear_soporte():
+    usuario = _usuario_autenticado()
+    if not usuario:
+        return jsonify({"error": "Sesion invalida o expirada. Inicia sesion para crear el soporte."}), 401
     data = request.json
     origen = str(data.get('origen', 'cliente')).lower().strip()
     if origen not in ('cliente', 'orca', 'terceros'):
@@ -136,7 +139,9 @@ def crear_soporte():
         fecha_cierre=_parse_date(data.get('fecha_cierre')),
         case_code=None if external_case_key else case_code,
         ismael_id_origen=ismael_id_origen,
-        external_case_key=external_case_key or None
+        external_case_key=external_case_key or None,
+        creado_por_id=usuario.id,
+        creado_por_nombre='Admin' if str(usuario.rol or '').strip().lower() == 'admin' else usuario.name,
     )
 
     db.session.add(nuevo_soporte)
@@ -158,6 +163,8 @@ def crear_soporte():
 # Listar todos los registros de soporte
 @soporte_blueprint.route('/', methods=['GET'])
 def obtener_soportes():
+    usuario = _usuario_autenticado()
+    mostrar_creador = bool(usuario and str(usuario.rol or '').strip().lower() == 'admin')
     soportes = Soporte.query.all()
     resultado = []
     for soporte in soportes:
@@ -189,6 +196,10 @@ def obtener_soportes():
             "case_code": soporte.case_code,
             "ismael_id_origen": soporte.ismael_id_origen,
             "external_case_key": soporte.external_case_key,
+            **({
+                "creado_por_id": soporte.creado_por_id,
+                "creado_por_nombre": soporte.creado_por_nombre,
+            } if mostrar_creador else {}),
             "created_at": _iso_value(_get_datetime_attr(soporte, "created_at")),
             "updated_at": _iso_value(_get_datetime_attr(soporte, "updated_at"))
         })
