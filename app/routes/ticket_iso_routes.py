@@ -156,7 +156,7 @@ def _validar(data, ticket=None):
     return {
         'numero_ticket': numero or (ticket.numero_ticket if ticket else None),
         'fecha_recepcion': recepcion,
-        'asunto_procedimiento': _texto(data, 'asunto_procedimiento', 250, obligatorio=True),
+        'asunto_procedimiento': _texto(data, 'asunto_procedimiento', 250) if 'asunto_procedimiento' in data else (ticket.asunto_procedimiento if ticket else None),
         'origen': origen,
         'categoria_procedimiento': categoria,
         'observaciones': _texto(data, 'observaciones', 10000) if 'observaciones' in data else (ticket.observaciones if ticket else None),
@@ -266,3 +266,15 @@ def editar_ticket(ticket_id):
     if not ticket:
         return jsonify({'error': 'El ticket ya no existe.'}), 404
     return _guardar(ticket)
+
+
+@ticket_iso_blueprint.route('/<int:ticket_id>', methods=['DELETE'])
+def eliminar_ticket(ticket_id):
+    if str(g.ticket_iso_usuario.rol or '').strip().lower() != 'admin':
+        return jsonify({'error': 'Solo el admin puede eliminar tickets ISO.'}), 403
+    ticket = db.session.get(TicketISO, ticket_id)
+    if not ticket:
+        return jsonify({'error': 'El ticket ya no existe.'}), 404
+    db.session.delete(ticket)
+    db.session.commit()
+    return jsonify({'message': 'Ticket eliminado correctamente.'}), 200

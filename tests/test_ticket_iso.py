@@ -81,7 +81,7 @@ class TicketISOTest(unittest.TestCase):
         return self.client.post('/api/ticket-iso/', json={**self.payload, **changes}, headers=self.admin)
 
     def test_access_requires_session_and_current_permission(self):
-        for method, path in [('GET', '/'), ('GET', '/catalogos'), ('GET', '/1'), ('POST', '/'), ('PUT', '/1')]:
+        for method, path in [('GET', '/'), ('GET', '/catalogos'), ('GET', '/1'), ('POST', '/'), ('PUT', '/1'), ('DELETE', '/1')]:
             self.assertEqual(self.client.open('/api/ticket-iso' + path, method=method, json=self.payload).status_code, 401)
             self.assertEqual(self.client.open('/api/ticket-iso' + path, method=method, json=self.payload, headers=self.tecnico).status_code, 403)
         self.assertEqual(self.client.get('/api/ticket-iso/', headers=self.headers(self.admin_id, expired=True)).status_code, 401)
@@ -122,7 +122,7 @@ class TicketISOTest(unittest.TestCase):
 
     def test_invalid_input_never_creates_a_record(self):
         invalid = [
-            {'asunto_procedimiento': ' '}, {'asunto_procedimiento': 'x' * 251},
+            {'asunto_procedimiento': 'x' * 251},
             {'numero_ticket': 'x' * 121}, {'numero_ticket': 123}, {'problema': ' '},
             {'numero_automatico': 'true'},
             {'origen': ''}, {'origen': 'desconocido'}, {'origen': None},
@@ -156,6 +156,33 @@ class TicketISOTest(unittest.TestCase):
     def test_unknown_ticket_returns_404(self):
         self.assertEqual(self.client.get('/api/ticket-iso/999', headers=self.admin).status_code, 404)
         self.assertEqual(self.client.put('/api/ticket-iso/999', json=self.payload, headers=self.admin).status_code, 404)
+        self.assertEqual(self.client.delete('/api/ticket-iso/999', headers=self.admin).status_code, 404)
+
+    def test_subject_is_optional_and_legacy_subject_is_preserved_on_edit(self):
+        payload = {key: value for key, value in self.payload.items() if key != 'asunto_procedimiento'}
+        response = self.client.post('/api/ticket-iso/', json=payload, headers=self.encargado)
+        self.assertEqual(response.status_code, 201)
+        self.assertIsNone(response.get_json()['ticket']['asunto_procedimiento'])
+        legacy = self.create(numero_ticket='LEGACY').get_json()['ticket']
+        response = self.client.put('/api/ticket-iso/' + str(legacy['id_ticket']),
+            json={**payload, 'numero_ticket': 'LEGACY', 'problema': 'Problema actualizado'}, headers=self.admin)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()['ticket']['asunto_procedimiento'], 'Revision de procedimiento')
+        self.assertEqual(response.get_json()['ticket']['problema'], 'Problema actualizado')
+
+    def test_only_admin_can_delete_and_sequence_is_not_reused(self):
+        ticket = self.create(numero_ticket='', numero_automatico=True).get_json()['ticket']
+        other = self.create(numero_ticket='', numero_automatico=True).get_json()['ticket']
+        url = '/api/ticket-iso/' + str(other['id_ticket'])
+        self.assertEqual(self.client.delete(url, headers=self.encargado).status_code, 403)
+        self.assertIsNotNone(db.session.get(models.TicketISO, other['id_ticket']))
+        self.assertEqual(self.client.delete(url, headers=self.admin).status_code, 200)
+        self.assertIsNone(db.session.get(models.TicketISO, other['id_ticket']))
+        listed = self.client.get('/api/ticket-iso/', headers=self.admin).get_json()['tickets']
+        self.assertEqual([row['id_ticket'] for row in listed], [ticket['id_ticket']])
+        self.assertEqual(self.client.delete(url, headers=self.admin).status_code, 404)
+        next_ticket = self.create(numero_ticket='', numero_automatico=True).get_json()['ticket']
+        self.assertTrue(next_ticket['numero_ticket'].endswith('-003'))
 
     def test_responsible_notes_and_editable_closing_date_are_saved(self):
         catalogos = self.client.get('/api/ticket-iso/catalogos', headers=self.admin).get_json()
