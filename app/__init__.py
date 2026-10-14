@@ -4,6 +4,7 @@ from flask_cors import CORS
 from sqlalchemy import text
 from .config import Config
 from .database import db
+from .ticket_iso_schema import ensure_ticket_iso_schema
 from flask import send_from_directory
 from .socketio_ext import socketio
 
@@ -142,6 +143,9 @@ def create_app():
 
     with app.app_context():
         db.create_all()
+        columnas_ticket_iso = ensure_ticket_iso_schema(db.engine)
+        if columnas_ticket_iso:
+            print('[schema] Ticket ISO actualizado: ' + ', '.join(columnas_ticket_iso))
         _db_execute = db.session.execute
         migration_lock_key = 84573219
         try:
@@ -172,10 +176,6 @@ def create_app():
 
         if not migration_lock_ok:
             print("[schema] migraciones automaticas omitidas: otro proceso mantiene el lock de esquema")
-        _schema_exec(text("ALTER TABLE tickets_iso ADD COLUMN IF NOT EXISTS asunto_procedimiento VARCHAR(250)"))
-        _schema_exec(text("ALTER TABLE tickets_iso ADD COLUMN IF NOT EXISTS origen VARCHAR(50)"))
-        _schema_exec(text("ALTER TABLE tickets_iso ADD COLUMN IF NOT EXISTS categoria_procedimiento VARCHAR(60)"))
-        _schema_exec(text("ALTER TABLE tickets_iso ADD COLUMN IF NOT EXISTS observaciones TEXT"))
         # Compat de esquema: snapshot de numero_serie por movimiento de caja.
         _schema_exec(
             text(
