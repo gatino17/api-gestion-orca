@@ -144,10 +144,12 @@ def _validar(data, ticket=None):
                 cierre = ticket.fecha_cierre
         else:
             cierre = ticket.fecha_cierre if ticket and ticket.fecha_cierre else datetime.now(timezone.utc)
-        if datetime.fromisoformat(_iso(cierre)).astimezone(CHILE).date() < recepcion.astimezone(CHILE).date():
-            raise ValueError('El cierre no puede ser anterior a la recepcion del ticket.')
-    elif data.get('fecha_cierre'):
-        raise ValueError('Solo los tickets resueltos pueden tener fecha de cierre.')
+    elif 'fecha_cierre' in data and data['fecha_cierre'] not in (None, ''):
+        cierre = _fecha_dia(data['fecha_cierre'], 'Indica una fecha de cierre valida.')
+    elif 'fecha_cierre' not in data and ticket and ticket.estado != 'resuelto':
+        cierre = ticket.fecha_cierre
+    if cierre and datetime.fromisoformat(_iso(cierre)).astimezone(CHILE).date() < recepcion.astimezone(CHILE).date():
+        raise ValueError('El cierre no puede ser anterior a la recepcion del ticket.')
     return {
         'numero_ticket': numero or (ticket.numero_ticket if ticket else None),
         'fecha_recepcion': recepcion,

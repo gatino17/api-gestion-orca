@@ -132,7 +132,8 @@ class TicketISOTest(unittest.TestCase):
             {'responsable_id': True}, {'responsable_id': 999}, {'responsable_id': -1}, {'responsable_id': 1.5},
             {'observaciones': 'x' * 10001}, {'observaciones': 123},
             {'estado': 'resuelto', 'fecha_cierre': ''}, {'estado': 'resuelto', 'fecha_cierre': '2026-02-30'},
-            {'estado': 'resuelto', 'fecha_cierre': '2026-10-13'}, {'fecha_cierre': '2026-10-15'},
+            {'estado': 'resuelto', 'fecha_cierre': '2026-10-13'}, {'fecha_cierre': '2026-10-13'},
+            {'fecha_cierre': False}, {'fecha_cierre': 0},
         ]
         for changes in invalid:
             with self.subTest(changes=changes):
@@ -192,6 +193,20 @@ class TicketISOTest(unittest.TestCase):
             'estado': 'resuelto', 'fecha_recepcion': '2020-01-01', 'fecha_cierre': fecha}, headers=self.admin)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()['ticket']['fecha_cierre'], ticket['fecha_cierre'])
+
+    def test_open_ticket_can_save_and_edit_an_expected_closing_date(self):
+        response = self.create(fecha_cierre='2026-10-20')
+        self.assertEqual(response.status_code, 201)
+        ticket = response.get_json()['ticket']
+        self.assertEqual(ticket['estado'], 'pendiente')
+        self.assertEqual(ticket['fecha_cierre'], '2026-10-20T15:00:00+00:00')
+        url = '/api/ticket-iso/' + str(ticket['id_ticket'])
+        response = self.client.put(url, json={**self.payload, 'estado': 'en_seguimiento'}, headers=self.admin)
+        self.assertEqual(response.get_json()['ticket']['fecha_cierre'], ticket['fecha_cierre'])
+        response = self.client.put(url, json={**self.payload, 'estado': 'en_seguimiento', 'fecha_cierre': '2026-10-21'}, headers=self.admin)
+        self.assertEqual(response.get_json()['ticket']['fecha_cierre'], '2026-10-21T15:00:00+00:00')
+        response = self.client.put(url, json={**self.payload, 'fecha_cierre': None}, headers=self.admin)
+        self.assertIsNone(response.get_json()['ticket']['fecha_cierre'])
 
     def test_automatic_numbers_increment_and_manual_numbers_are_respected(self):
         prefijo = f'ISO-{datetime.now(routes.CHILE).year}-'
