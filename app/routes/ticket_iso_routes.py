@@ -281,23 +281,27 @@ def editar_ticket(ticket_id):
     return _guardar(ticket)
 
 
+def _validar_plan(data, ticket):
+    if not isinstance(data, dict):
+        raise ValueError('Los datos del plan de accion no son validos.')
+    if 'fecha_cierre' in data:
+        raise ValueError('El cierre del caso se registra por separado, no en un plan de accion.')
+    resultado = _texto(data, 'resultado_plan_accion', 2000, obligatorio=True)
+    valor_control = data.get('fecha_control')
+    control = None if valor_control in (None, '') else _fecha_dia(valor_control, 'Indica una fecha de control valida.').astimezone(CHILE).date()
+    recepcion = datetime.fromisoformat(_iso(ticket.fecha_recepcion)).astimezone(CHILE).date()
+    if control and control < recepcion:
+        raise ValueError('La fecha de control no puede ser anterior a la recepcion del ticket.')
+    return resultado, control
+
+
 @ticket_iso_blueprint.route('/<int:ticket_id>/planes-accion', methods=['POST'])
 def guardar_plan_accion(ticket_id):
     ticket = db.session.get(TicketISO, ticket_id)
     if not ticket:
         return jsonify({'error': 'El ticket ya no existe.'}), 404
     try:
-        data = request.get_json(silent=True)
-        if not isinstance(data, dict):
-            raise ValueError('Los datos del plan de accion no son validos.')
-        if 'fecha_cierre' in data:
-            raise ValueError('El cierre del caso se registra por separado, no en un plan de accion.')
-        resultado = _texto(data, 'resultado_plan_accion', 2000, obligatorio=True)
-        valor_control = data.get('fecha_control')
-        control = None if valor_control in (None, '') else _fecha_dia(valor_control, 'Indica una fecha de control valida.').astimezone(CHILE).date()
-        recepcion = datetime.fromisoformat(_iso(ticket.fecha_recepcion)).astimezone(CHILE).date()
-        if control and control < recepcion:
-            raise ValueError('La fecha de control no puede ser anterior a la recepcion del ticket.')
+        resultado, control = _validar_plan(request.get_json(silent=True), ticket)
         usuario = g.ticket_iso_usuario
         plan = TicketISOPlanAccion(ticket=ticket, resultado_plan_accion=resultado, fecha_control=control,
             creado_por_nombre='Admin' if str(usuario.rol or '').strip().lower() == 'admin' else usuario.name)
@@ -305,6 +309,24 @@ def guardar_plan_accion(ticket_id):
         ticket.updated_at = datetime.now(timezone.utc)
         db.session.commit()
         return jsonify({'ticket': _serializar(ticket), 'message': 'Plan de accion agregado.'}), 201
+    except ValueError as exc:
+        db.session.rollback()
+        return jsonify({'error': str(exc)}), 400
+
+
+@ticket_iso_blueprint.route('/<int:ticket_id>/planes-accion/<int:plan_id>', methods=['PATCH'])
+def editar_plan_accion(ticket_id, plan_id):
+    ticket = db.session.get(TicketISO, ticket_id)
+    plan = TicketISOPlanAccion.query.filter_by(id_plan=plan_id, ticket_id=ticket_id).first()
+    if not ticket or not plan:
+        return jsonify({'error': 'El plan de accion ya no existe en este ticket.'}), 404
+    try:
+        resultado, control = _validar_plan(request.get_json(silent=True), ticket)
+        plan.resultado_plan_accion = resultado
+        plan.fecha_control = control
+        ticket.updated_at = datetime.now(timezone.utc)
+        db.session.commit()
+        return jsonify({'ticket': _serializar(ticket), 'message': 'Plan de accion actualizado.'}), 200
     except ValueError as exc:
         db.session.rollback()
         return jsonify({'error': str(exc)}), 400
@@ -334,8 +356,9 @@ def cerrar_ticket(ticket_id):
 
 @ticket_iso_blueprint.route('/<int:ticket_id>', methods=['DELETE'])
 def eliminar_ticket(ticket_id):
-    if str(g.ticket_iso_usuario.rol or '').strip().lower() != 'admin':
-        return jsonify({'error': 'Solo el admin puede eliminar tickets ISO.'}), 403
+    rol = re.sub(r'[\s-]+', '_', str(g.ticket_iso_usuario.rol or '').strip().lower())
+    if rol not in {'admin', 'ticket_iso'}:
+        return jsonify({'error': 'Solo los roles admin y Ticket ISO pueden eliminar tickets.'}), 403
     ticket = db.session.get(TicketISO, ticket_id)
     if not ticket:
         return jsonify({'error': 'El ticket ya no existe.'}), 404
