@@ -547,6 +547,8 @@ class TicketISO(db.Model):
     origen = db.Column(db.String(50), nullable=True)
     categoria_procedimiento = db.Column(db.String(60), nullable=True)
     observaciones = db.Column(db.Text, nullable=True)
+    resultado_plan_accion = db.Column(db.Text, nullable=True)
+    fecha_control = db.Column(db.Date, nullable=True)
     problema = db.Column(db.Text, nullable=False)
     responsable_id = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
     responsable_nombre = db.Column(db.String(100), nullable=True)
@@ -558,6 +560,25 @@ class TicketISO(db.Model):
     creado_por_nombre = db.Column(db.String(120), nullable=True)
     created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
     updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+
+    planes_accion = db.relationship('TicketISOPlanAccion', back_populates='ticket', cascade='all, delete-orphan',
+        order_by='TicketISOPlanAccion.id_plan.desc()', lazy='selectin')
+
+
+class TicketISOPlanAccion(db.Model):
+    __tablename__ = 'ticket_iso_planes_accion'
+    __table_args__ = (db.Index('uq_ticket_iso_plan_legado', 'ticket_id', unique=True,
+        postgresql_where=db.text('es_legado = TRUE'), sqlite_where=db.text('es_legado = TRUE')),)
+
+    id_plan = db.Column(db.Integer, primary_key=True)
+    ticket_id = db.Column(db.Integer, db.ForeignKey('tickets_iso.id_ticket', ondelete='CASCADE'), nullable=False, index=True)
+    resultado_plan_accion = db.Column(db.Text, nullable=True)
+    fecha_control = db.Column(db.Date, nullable=True)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    creado_por_nombre = db.Column(db.String(120), nullable=True)
+    es_legado = db.Column(db.Boolean, nullable=False, default=False)
+    ticket = db.relationship('TicketISO', back_populates='planes_accion')
 
 
 class TicketISOContador(db.Model):

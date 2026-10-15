@@ -81,7 +81,7 @@ class TicketISOTest(unittest.TestCase):
         return self.client.post('/api/ticket-iso/', json={**self.payload, **changes}, headers=self.admin)
 
     def test_access_requires_session_and_current_permission(self):
-        for method, path in [('GET', '/'), ('GET', '/catalogos'), ('GET', '/1'), ('POST', '/'), ('PUT', '/1'), ('DELETE', '/1')]:
+        for method, path in [('GET', '/'), ('GET', '/catalogos'), ('GET', '/1'), ('POST', '/'), ('PUT', '/1'), ('DELETE', '/1'), ('POST', '/1/planes-accion'), ('PATCH', '/1/cierre')]:
             self.assertEqual(self.client.open('/api/ticket-iso' + path, method=method, json=self.payload).status_code, 401)
             self.assertEqual(self.client.open('/api/ticket-iso' + path, method=method, json=self.payload, headers=self.tecnico).status_code, 403)
         self.assertEqual(self.client.get('/api/ticket-iso/', headers=self.headers(self.admin_id, expired=True)).status_code, 401)
@@ -157,6 +157,81 @@ class TicketISOTest(unittest.TestCase):
         self.assertEqual(self.client.get('/api/ticket-iso/999', headers=self.admin).status_code, 404)
         self.assertEqual(self.client.put('/api/ticket-iso/999', json=self.payload, headers=self.admin).status_code, 404)
         self.assertEqual(self.client.delete('/api/ticket-iso/999', headers=self.admin).status_code, 404)
+        self.assertEqual(self.client.post('/api/ticket-iso/999/planes-accion', json={}, headers=self.admin).status_code, 404)
+        self.assertEqual(self.client.patch('/api/ticket-iso/999/cierre', json={}, headers=self.admin).status_code, 404)
+
+    def test_seven_action_plans_are_independent_ordered_and_do_not_close_case(self):
+        ticket = self.create(responsable='Responsable externo', observaciones='Notas iniciales').get_json()['ticket']
+        url = '/api/ticket-iso/' + str(ticket['id_ticket'])
+        for number in range(1, 8):
+            response = self.client.post(url + '/planes-accion', json={
+                'resultado_plan_accion': '  Resultado ' + str(number) + '  ', 'fecha_control': '2026-10-20',
+                'problema': 'No sobrescribir', 'responsable': 'No sobrescribir', 'creado_por_nombre': 'Falso',
+            }, headers=self.encargado)
+            self.assertEqual(response.status_code, 201)
+            saved = response.get_json()['ticket']
+            self.assertEqual(len(saved['planes_accion']), number)
+            self.assertEqual(saved['estado'], 'pendiente')
+            self.assertIsNone(saved['fecha_cierre'])
+        saved = self.client.get(url, headers=self.admin).get_json()['ticket']
+        self.assertEqual([plan['numero'] for plan in saved['planes_accion']], list(range(7, 0, -1)))
+        self.assertEqual([plan['resultado_plan_accion'] for plan in saved['planes_accion']], ['Resultado ' + str(n) for n in range(7, 0, -1)])
+        self.assertEqual(len({plan['id_plan'] for plan in saved['planes_accion']}), 7)
+        self.assertTrue(all(plan['creado_por_nombre'] == 'Jorge' for plan in saved['planes_accion']))
+        self.assertEqual(saved['problema'], ticket['problema'])
+        self.assertEqual(saved['responsable'], ticket['responsable'])
+        self.assertEqual(saved['observaciones'], ticket['observaciones'])
+        response = self.client.put(url, json={**self.payload, 'estado': 'en_seguimiento'}, headers=self.admin)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.get_json()['ticket']['planes_accion']), 7)
+        self.assertEqual(self.client.put(url, json={**self.payload, 'fecha_recepcion': '2026-10-21'}, headers=self.admin).status_code, 400)
+
+    def test_case_closing_is_separate_and_preserves_all_plans(self):
+        ticket = self.create().get_json()['ticket']
+        url = '/api/ticket-iso/' + str(ticket['id_ticket'])
+        self.client.post(url + '/planes-accion', json={'resultado_plan_accion': 'Resultado inicial', 'fecha_control': '2026-10-15'}, headers=self.admin)
+        before = self.client.get(url, headers=self.admin).get_json()['ticket']['planes_accion']
+        response = self.client.patch(url + '/cierre', json={'fecha_cierre': '2026-10-16'}, headers=self.encargado)
+        self.assertEqual(response.status_code, 200)
+        closed = response.get_json()['ticket']
+        self.assertEqual(closed['estado'], 'resuelto')
+        self.assertEqual(closed['fecha_cierre'], '2026-10-16T15:00:00+00:00')
+        self.assertNotIn('creado_por_nombre', closed['planes_accion'][0])
+        self.assertEqual(self.client.get(url, headers=self.admin).get_json()['ticket']['planes_accion'], before)
+        response = self.client.post(url + '/planes-accion', json={'resultado_plan_accion': 'Nota posterior'}, headers=self.admin)
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.get_json()['ticket']['fecha_cierre'], closed['fecha_cierre'])
+        self.assertEqual(response.get_json()['ticket']['estado'], 'resuelto')
+        self.assertEqual(len(response.get_json()['ticket']['planes_accion']), 2)
+        response = self.client.put(url, json={**self.payload, 'estado': 'resuelto', 'fecha_cierre': '2026-10-17'}, headers=self.admin)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()['ticket']['fecha_cierre'], '2026-10-17T15:00:00+00:00')
+        self.assertEqual(len(response.get_json()['ticket']['planes_accion']), 2)
+
+    def test_action_plan_validates_without_inserting_invalid_records(self):
+        ticket = self.create().get_json()['ticket']
+        url = '/api/ticket-iso/' + str(ticket['id_ticket']) + '/planes-accion'
+        invalid = [None, [], {}, {'resultado_plan_accion': '  '}, {'resultado_plan_accion': 123},
+            {'resultado_plan_accion': 'x' * 2001}]
+        invalid += [{'resultado_plan_accion': 'Valido', **changes} for changes in [
+            {'fecha_control': '2026-02-30'}, {'fecha_control': False}, {'fecha_control': '2026-10-13'},
+            {'fecha_cierre': None}, {'fecha_cierre': '2026-10-16'}]]
+        for payload in invalid:
+            with self.subTest(payload=payload):
+                self.assertEqual(self.client.post(url, json=payload, headers=self.admin).status_code, 400)
+        self.assertEqual(models.TicketISOPlanAccion.query.count(), 0)
+        self.assertEqual(self.client.post(url, json={'resultado_plan_accion': 'Sin control'}, headers=self.admin).status_code, 201)
+        self.assertIsNone(models.TicketISOPlanAccion.query.one().fecha_control)
+
+    def test_closing_validates_date_and_deleted_ticket_removes_its_plans(self):
+        ticket = self.create().get_json()['ticket']
+        url = '/api/ticket-iso/' + str(ticket['id_ticket'])
+        for payload in [None, [], {}, {'fecha_cierre': ''}, {'fecha_cierre': False}, {'fecha_cierre': '2026-10-13'}, {'fecha_cierre': '2026-02-30'}]:
+            self.assertEqual(self.client.patch(url + '/cierre', json=payload, headers=self.admin).status_code, 400)
+        self.client.post(url + '/planes-accion', json={'resultado_plan_accion': 'Plan a eliminar'}, headers=self.admin)
+        self.assertEqual(models.TicketISOPlanAccion.query.count(), 1)
+        self.assertEqual(self.client.delete(url, headers=self.admin).status_code, 200)
+        self.assertEqual(models.TicketISOPlanAccion.query.count(), 0)
 
     def test_subject_is_optional_and_legacy_subject_is_preserved_on_edit(self):
         payload = {key: value for key, value in self.payload.items() if key != 'asunto_procedimiento'}

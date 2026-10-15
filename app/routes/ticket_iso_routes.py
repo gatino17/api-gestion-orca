@@ -7,7 +7,7 @@ from flask import Blueprint, g, jsonify, request
 from sqlalchemy.exc import IntegrityError
 
 from ..database import db
-from ..models import TicketISO, TicketISOContador, User
+from ..models import TicketISO, TicketISOContador, TicketISOPlanAccion, User
 from ..permissions import get_pages_for_role_name
 from .auth_routes import SECRET_KEY
 
@@ -62,6 +62,17 @@ def _serializar(ticket):
         'origen': ticket.origen,
         'categoria_procedimiento': ticket.categoria_procedimiento,
         'observaciones': ticket.observaciones,
+        'resultado_plan_accion': ticket.resultado_plan_accion,
+        'fecha_control': ticket.fecha_control.isoformat() if ticket.fecha_control else None,
+        'planes_accion': [{
+            'id_plan': plan.id_plan,
+            'numero': len(ticket.planes_accion) - index,
+            'resultado_plan_accion': plan.resultado_plan_accion,
+            'fecha_control': plan.fecha_control.isoformat() if plan.fecha_control else None,
+            'created_at': _iso(plan.created_at),
+            **({'creado_por_nombre': plan.creado_por_nombre}
+               if str(g.ticket_iso_usuario.rol or '').strip().lower() == 'admin' else {}),
+        } for index, plan in enumerate(ticket.planes_accion)],
         'cliente_id': ticket.cliente_id,
         'centro_id': ticket.centro_id,
         'cliente': ticket.cliente_nombre,
@@ -124,6 +135,8 @@ def _validar(data, ticket=None):
     if categoria not in CATEGORIAS_PROCEDIMIENTO:
         raise ValueError('Selecciona una categoria de procedimiento valida.')
     recepcion = _fecha_dia(data.get('fecha_recepcion'), 'Indica una fecha de recepcion valida.')
+    if ticket and any(plan.fecha_control and plan.fecha_control < recepcion.astimezone(CHILE).date() for plan in ticket.planes_accion):
+        raise ValueError('La recepcion no puede ser posterior a la fecha de control del plan de accion.')
     responsable_id = ticket.responsable_id if ticket else None
     responsable_nombre = ticket.responsable_nombre if ticket else None
     if 'responsable' in data:
@@ -266,6 +279,57 @@ def editar_ticket(ticket_id):
     if not ticket:
         return jsonify({'error': 'El ticket ya no existe.'}), 404
     return _guardar(ticket)
+
+
+@ticket_iso_blueprint.route('/<int:ticket_id>/planes-accion', methods=['POST'])
+def guardar_plan_accion(ticket_id):
+    ticket = db.session.get(TicketISO, ticket_id)
+    if not ticket:
+        return jsonify({'error': 'El ticket ya no existe.'}), 404
+    try:
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            raise ValueError('Los datos del plan de accion no son validos.')
+        if 'fecha_cierre' in data:
+            raise ValueError('El cierre del caso se registra por separado, no en un plan de accion.')
+        resultado = _texto(data, 'resultado_plan_accion', 2000, obligatorio=True)
+        valor_control = data.get('fecha_control')
+        control = None if valor_control in (None, '') else _fecha_dia(valor_control, 'Indica una fecha de control valida.').astimezone(CHILE).date()
+        recepcion = datetime.fromisoformat(_iso(ticket.fecha_recepcion)).astimezone(CHILE).date()
+        if control and control < recepcion:
+            raise ValueError('La fecha de control no puede ser anterior a la recepcion del ticket.')
+        usuario = g.ticket_iso_usuario
+        plan = TicketISOPlanAccion(ticket=ticket, resultado_plan_accion=resultado, fecha_control=control,
+            creado_por_nombre='Admin' if str(usuario.rol or '').strip().lower() == 'admin' else usuario.name)
+        db.session.add(plan)
+        ticket.updated_at = datetime.now(timezone.utc)
+        db.session.commit()
+        return jsonify({'ticket': _serializar(ticket), 'message': 'Plan de accion agregado.'}), 201
+    except ValueError as exc:
+        db.session.rollback()
+        return jsonify({'error': str(exc)}), 400
+
+
+@ticket_iso_blueprint.route('/<int:ticket_id>/cierre', methods=['PATCH'])
+def cerrar_ticket(ticket_id):
+    ticket = db.session.get(TicketISO, ticket_id)
+    if not ticket:
+        return jsonify({'error': 'El ticket ya no existe.'}), 404
+    try:
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            raise ValueError('Los datos de cierre no son validos.')
+        cierre = _fecha_dia(data.get('fecha_cierre'), 'Indica una fecha de cierre valida.')
+        if cierre.astimezone(CHILE).date() < datetime.fromisoformat(_iso(ticket.fecha_recepcion)).astimezone(CHILE).date():
+            raise ValueError('El cierre no puede ser anterior a la recepcion del ticket.')
+        if not ticket.fecha_cierre or datetime.fromisoformat(_iso(ticket.fecha_cierre)).astimezone(CHILE).date() != cierre.astimezone(CHILE).date():
+            ticket.fecha_cierre = cierre
+        ticket.estado = 'resuelto'
+        db.session.commit()
+        return jsonify({'ticket': _serializar(ticket), 'message': 'Caso cerrado correctamente.'}), 200
+    except ValueError as exc:
+        db.session.rollback()
+        return jsonify({'error': str(exc)}), 400
 
 
 @ticket_iso_blueprint.route('/<int:ticket_id>', methods=['DELETE'])
