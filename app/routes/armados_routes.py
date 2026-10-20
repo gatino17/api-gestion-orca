@@ -12,6 +12,9 @@ import re
 import json
 from sqlalchemy import and_, or_, func
 from sqlalchemy.orm import joinedload
+from sqlalchemy.exc import IntegrityError
+from ..models import ArmadoInstalacionConfirmada
+from ..armado_seguimiento import hoy_chile, resumen_despacho, puede_confirmar_instalacion, serializar_instalacion
 
 armados_blueprint = Blueprint('armados', __name__)
 SECRET_KEY = "remoto753524"
@@ -567,6 +570,16 @@ def listar_armados():
         .all()
     )
 
+    instalaciones = {item.armado_id: item for item in ArmadoInstalacionConfirmada.query.filter(ArmadoInstalacionConfirmada.armado_id.in_(armado_ids)).all()}
+    guias_por_armado = defaultdict(list)
+    for guia in ArmadoGuiaSalida.query.filter(ArmadoGuiaSalida.armado_id.in_(armado_ids)).all():
+        guias_por_armado[guia.armado_id].append(guia)
+    actas_por_armado = defaultdict(list)
+    for acta in ActaEntrega.query.filter(ActaEntrega.armado_id.in_(armado_ids), ActaEntrega.tipo_instalacion == 'instalacion').order_by(ActaEntrega.fecha_registro.desc()).all():
+        actas_por_armado[acta.armado_id].append({'id_acta_entrega': acta.id_acta_entrega,
+            'fecha_registro': acta.fecha_registro.isoformat(), 'firmada': bool(acta.firma_recepciona)})
+    usuario_seguimiento = usuario_actual_desde_token()
+
     resultado = []
     for armado in armados:
         armado_id = int(armado.id_armado or 0)
@@ -639,6 +652,17 @@ def listar_armados():
             "fecha_asignacion": armado.fecha_asignacion,
             "fecha_inicio": fecha_inicio_real,
             "fecha_cierre": armado.fecha_cierre,
+            "seguimiento": {
+                'fecha_asignacion': armado.fecha_asignacion.isoformat() if armado.fecha_asignacion else None,
+                'fecha_inicio': (armado.fecha_inicio or (primera_mov_fecha.date() if primera_mov_fecha else None)).isoformat()
+                    if armado.fecha_inicio or primera_mov_fecha else None,
+                'inicio_registrado': bool(armado.fecha_inicio or primera_mov_fecha) or armado.estado in {'en_proceso', 'prefinalizado', 'finalizado'},
+                'fecha_fin_armado': armado.fecha_cierre.isoformat() if armado.fecha_cierre and armado.estado == 'finalizado' else None,
+                'despacho': resumen_despacho(guias_por_armado.get(armado_id, []), list(cajas_estado_map) or [*cajas_equipos, *cajas_materiales], armado.total_cajas_manual),
+                'instalacion': serializar_instalacion(instalaciones.get(armado_id)),
+                'actas': actas_por_armado.get(armado_id, []),
+                'puede_confirmar_instalacion': puede_confirmar_instalacion(usuario_seguimiento, armado, [part.tecnico_id for part in tecnicos_activos_por_armado.get(armado_id, [])]),
+            },
             "check_tecnico_fecha": armado.check_tecnico_fecha,
             "observacion": armado.observacion,
             "total_cajas": total_cajas,
@@ -655,6 +679,79 @@ def listar_armados():
                 "tecnicos_asignados": tecnicos_activos
             })
     return jsonify(resultado), 200
+
+
+@armados_blueprint.route('/<int:id_armado>/instalacion-confirmada', methods=['POST'])
+def confirmar_instalacion_armado(id_armado):
+    usuario = usuario_actual_desde_token()
+    if not usuario:
+        return jsonify({'message': 'Debes iniciar sesion.'}), 401
+    armado = db.session.get(Armado, id_armado)
+    if not armado:
+        return jsonify({'message': 'Armado no encontrado.'}), 404
+    activos = [part.tecnico_id for part in _participaciones_activas_armado(id_armado)]
+    if not puede_confirmar_instalacion(usuario, armado, activos):
+        return jsonify({'message': 'No tienes permiso para confirmar esta instalacion.'}), 403
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({'message': 'Los datos de instalacion son requeridos.'}), 400
+    fecha_texto = data.get('fecha_instalacion')
+    try:
+        if not isinstance(fecha_texto, str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}', fecha_texto):
+            raise ValueError()
+        fecha = datetime.strptime(fecha_texto, '%Y-%m-%d').date()
+    except ValueError:
+        return jsonify({'message': 'Indica una fecha de instalacion valida.'}), 400
+    observacion = data.get('observacion') or ''
+    if not isinstance(observacion, str) or len(observacion) > 2000:
+        return jsonify({'message': 'La observacion admite hasta 2000 caracteres.'}), 400
+    observacion = observacion.strip() or None
+    acta_id = data.get('acta_entrega_id')
+    if acta_id is not None:
+        if isinstance(acta_id, bool) or not isinstance(acta_id, int):
+            return jsonify({'message': 'Selecciona un acta valida.'}), 400
+        acta = db.session.get(ActaEntrega, acta_id)
+        if not acta or acta.armado_id != id_armado or acta.centro_id != armado.centro_id or acta.tipo_instalacion != 'instalacion':
+            return jsonify({'message': 'El acta debe corresponder a la instalacion de este armado.'}), 400
+
+    def respuesta_existente(registro):
+        if (registro.fecha_instalacion, registro.acta_entrega_id, registro.observacion) == (fecha, acta_id, observacion):
+            return jsonify({'instalacion': serializar_instalacion(registro)}), 200
+        return jsonify({'message': 'Esta instalacion ya fue confirmada. Actualiza la vista.'}), 409
+
+    existente = db.session.get(ArmadoInstalacionConfirmada, id_armado)
+    if existente:
+        return respuesta_existente(existente)
+    if armado.estado != 'finalizado':
+        return jsonify({'message': 'Primero debes finalizar el armado.'}), 400
+    cajas = list(parse_cajas_estado(armado.cajas_estado_json)) or [
+        equipo.caja for equipo in EquiposIP.query.filter_by(centro_id=armado.centro_id).all()
+    ] + [material.caja for material in ArmadoMaterial.query.filter_by(armado_id=id_armado).all()]
+    despacho = resumen_despacho(ArmadoGuiaSalida.query.filter_by(armado_id=id_armado).all(), cajas, armado.total_cajas_manual)
+    if not despacho['completo']:
+        return jsonify({'message': 'Completa el despacho de los bultos antes de confirmar la instalacion.'}), 400
+    primer_movimiento = db.session.query(func.min(ArmadoCajaMovimiento.fecha)).filter_by(armado_id=id_armado).scalar()
+    fechas_previas = [valor for valor in (armado.fecha_asignacion, armado.fecha_inicio, armado.fecha_cierre,
+                                        primer_movimiento.date() if primer_movimiento else None) if valor]
+    fechas_previas.append(datetime.strptime(despacho['fecha_ultima_salida'], '%Y-%m-%d').date())
+    if fecha > hoy_chile() or any(fecha < valor for valor in fechas_previas):
+        return jsonify({'message': 'La instalacion no puede ser futura ni anterior al armado o al ultimo despacho.'}), 400
+    registro = ArmadoInstalacionConfirmada(
+        armado_id=id_armado, fecha_instalacion=fecha, acta_entrega_id=acta_id,
+        confirmado_por_id=usuario.id, confirmado_por_nombre=usuario.name,
+        observacion=observacion,
+    )
+    db.session.add(registro)
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        existente = db.session.get(ArmadoInstalacionConfirmada, id_armado)
+        if existente:
+            return respuesta_existente(existente)
+        raise
+    emitir_actualizacion_armado(id_armado, 'instalacion_confirmada')
+    return jsonify({'instalacion': serializar_instalacion(registro)}), 201
 
 
 @armados_blueprint.route('/', methods=['POST'])
@@ -951,6 +1048,7 @@ def eliminar_guia_salida_por_id(id_guia_salida):
 def actualizar_armado(id_armado):
     data = request.json or {}
     armado = Armado.query.get_or_404(id_armado)
+    estado_anterior = armado.estado
 
     armado.centro_id = data.get('centro_id', armado.centro_id)
     armado.tecnico_id = data.get('tecnico_id', armado.tecnico_id)
@@ -973,6 +1071,14 @@ def actualizar_armado(id_armado):
     if 'check_tecnico_fecha' in data:
         parsed = parse_date(data.get('check_tecnico_fecha'))
         armado.check_tecnico_fecha = parsed if parsed is not None else armado.check_tecnico_fecha
+
+    # Record new milestones only; do not invent dates when editing legacy records.
+    if armado.estado != estado_anterior:
+        if armado.estado == 'en_proceso' and not armado.fecha_inicio:
+            primer_movimiento = db.session.query(func.min(ArmadoCajaMovimiento.fecha)).filter_by(armado_id=id_armado).scalar()
+            armado.fecha_inicio = primer_movimiento.date() if primer_movimiento else hoy_chile()
+        if armado.estado == 'finalizado' and not armado.fecha_cierre:
+            armado.fecha_cierre = hoy_chile()
 
     armado.observacion = data.get('observacion', armado.observacion)
     if 'total_cajas_manual' in data:

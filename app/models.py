@@ -1082,6 +1082,19 @@ class Armado(db.Model):
         )
 
 
+class ArmadoInstalacionConfirmada(db.Model):
+    __tablename__ = 'armados_instalaciones_confirmadas'
+
+    armado_id = db.Column(db.Integer, db.ForeignKey('armados.id_armado', ondelete='CASCADE'), primary_key=True)
+    fecha_instalacion = db.Column(db.Date, nullable=False)
+    acta_entrega_id = db.Column(db.Integer, db.ForeignKey('actas_entrega.id_acta_entrega', ondelete='SET NULL'), nullable=True)
+    confirmado_por_id = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    confirmado_por_nombre = db.Column(db.String(120), nullable=True)
+    observacion = db.Column(db.Text, nullable=True)
+    confirmado_at = db.Column(db.DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    armado = db.relationship('Armado', backref=db.backref('instalacion_confirmada', uselist=False, cascade='all, delete-orphan'))
+
+
 class ArmadoGuiaSalida(db.Model):
     __tablename__ = 'armados_guias_salida'
 
