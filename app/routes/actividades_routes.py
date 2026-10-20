@@ -1,8 +1,11 @@
 from flask import Blueprint, request, jsonify, current_app
 from sqlalchemy import or_
+from sqlalchemy.orm import joinedload
 import jwt
 import unicodedata
-from ..models import Actividad, Centro, Encargado, User
+from ..models import Actividad, Centro, Encargado, User, Armado, ArmadoActividadInstalacion, ArmadoInstalacionConfirmada
+from ..armado_seguimiento import normalizar_estado
+from datetime import date
 from ..database import db
 from ..socketio_ext import emit_actividad_event
 
@@ -75,6 +78,7 @@ def _serialize_actividad(actividad):
         "estado": actividad.estado,
         "centro_id": actividad.centro_id,
         "soporte_id": actividad.soporte_id,
+        "armado_id": actividad.vinculo_instalacion.armado_id if actividad.vinculo_instalacion else None,
         "centro": {
             "id_centro": actividad.centro.id_centro if actividad.centro else None,
             "nombre": actividad.centro.nombre if actividad.centro else None,
@@ -205,10 +209,70 @@ def _asignar_tecnicos_relacion(actividad, tecnico_encargado, tecnico_ayudante, t
         return
     actividad.encargados = Encargado.query.filter(Encargado.id_encargado.in_(ids)).all()
 
+def _preparar_fechas(data):
+    for campo in ('fecha_reclamo', 'fecha_inicio', 'fecha_termino'):
+        if campo in data and data[campo]:
+            try:
+                data[campo] = date.fromisoformat(data[campo])
+            except (ValueError, TypeError):
+                raise ValueError('Indica una fecha valida para ' + campo + '.')
+
+
+def _vincular_instalacion(actividad, data):
+    vinculo = actividad.vinculo_instalacion
+    raw = data.get('armado_id', vinculo.armado_id if vinculo else None)
+    if raw in (None, ''):
+        if vinculo:
+            if db.session.get(ArmadoInstalacionConfirmada, vinculo.armado_id):
+                raise ValueError('No puedes desvincular una instalacion ya confirmada.')
+            db.session.delete(vinculo)
+        return
+    try:
+        if isinstance(raw, bool) or not str(raw).isdigit():
+            raise ValueError()
+        armado_id = int(raw)
+    except (ValueError, TypeError):
+        raise ValueError('Selecciona un armado valido.')
+    # Lock the parent to serialize competing calendar assignments for one armado.
+    armado = Armado.query.filter_by(id_armado=armado_id).with_for_update().first()
+    if not armado or str(actividad.centro_id) != str(armado.centro_id):
+        raise ValueError('El armado debe pertenecer al centro de la actividad.')
+    if normalizar_estado(actividad.area) != 'instalacion' or actividad.soporte_id:
+        raise ValueError('Solo una actividad de Instalacion puede asociarse a un armado.')
+    if normalizar_estado(armado.estado) in {'cancelado', 'anulado'}:
+        raise ValueError('No puedes asignar un armado cancelado.')
+    if actividad.fecha_inicio and armado.fecha_asignacion and actividad.fecha_inicio < armado.fecha_asignacion:
+        raise ValueError('La instalacion no puede programarse antes de la asignacion del armado.')
+    if actividad.fecha_inicio and actividad.fecha_termino and actividad.fecha_termino < actividad.fecha_inicio:
+        raise ValueError('La fecha de termino no puede ser anterior al inicio de la instalacion.')
+    if vinculo and vinculo.armado_id != armado_id and db.session.get(ArmadoInstalacionConfirmada, vinculo.armado_id):
+        raise ValueError('No puedes cambiar el armado de una instalacion confirmada.')
+    confirmada = db.session.get(ArmadoInstalacionConfirmada, armado_id)
+    if confirmada and (not vinculo or vinculo.armado_id != armado_id):
+        raise ValueError('Ese armado ya tiene una instalacion confirmada.')
+    if confirmada and normalizar_estado(actividad.estado) != 'finalizado':
+        raise ValueError('La instalacion ya esta confirmada; su actividad debe permanecer finalizada.')
+    if confirmada and (not actividad.fecha_inicio or actividad.fecha_inicio > confirmada.fecha_instalacion):
+        raise ValueError('La actividad no puede programarse despues de la instalacion confirmada.')
+    otras = ArmadoActividadInstalacion.query.filter_by(armado_id=armado_id).all()
+    cancelada = normalizar_estado(actividad.estado) in {'cancelado', 'cancelada', 'anulado', 'anulada'}
+    if not cancelada and any(item.actividad_id != actividad.id_actividad and item.actividad
+                            and normalizar_estado(item.actividad.estado) not in {'cancelado', 'cancelada', 'anulado', 'anulada'} for item in otras):
+        raise ValueError('El armado ya tiene una actividad de instalacion. Edita esa actividad o cancela la anterior.')
+    if vinculo:
+        vinculo.armado_id = armado_id
+    else:
+        actividad.vinculo_instalacion = ArmadoActividadInstalacion(armado_id=armado_id)
+
+
 # Crear nueva actividad
 @actividades_blueprint.route('/', methods=['POST'])
 def crear_actividad():
-    data = request.json
+    data = dict(request.json or {})
+    try:
+        _preparar_fechas(data)
+    except ValueError as exc:
+        return jsonify({'message': str(exc)}), 400
     tecnico_encargado = data.get('tecnico_encargado')
     tecnico_ayudante = data.get('tecnico_ayudante')
     nueva_actividad = Actividad(
@@ -233,6 +297,12 @@ def crear_actividad():
         data.get('tecnicos_adicionales') or []
     )
 
+    try:
+        with db.session.no_autoflush:
+            _vincular_instalacion(nueva_actividad, data)
+    except ValueError as exc:
+        db.session.rollback()
+        return jsonify({'message': str(exc)}), 400
     db.session.add(nueva_actividad)
     db.session.commit()
     emit_actividad_event("actividad_updated", {
@@ -249,7 +319,7 @@ def crear_actividad():
 # Listar todas las actividades
 @actividades_blueprint.route('/', methods=['GET'])
 def obtener_actividades():
-    actividades = Actividad.query.all()
+    actividades = Actividad.query.options(joinedload(Actividad.vinculo_instalacion)).all()
     return jsonify([_serialize_actividad(actividad) for actividad in actividades]), 200
 
 
@@ -262,7 +332,7 @@ def obtener_actividades_mias():
     estado = (request.args.get("estado") or "").strip()
     area = (request.args.get("area") or "").strip()
     perfil = Encargado.query.filter_by(user_id=usuario.id).first()
-    query = Actividad.query
+    query = Actividad.query.options(joinedload(Actividad.vinculo_instalacion))
 
     # Soporta ambos esquemas:
     # - tecnico_* guardando id_encargado (modelo normal)
@@ -292,7 +362,7 @@ def obtener_actividades_mias():
     actividades = query.order_by(Actividad.fecha_inicio.asc().nullslast(), Actividad.id_actividad.desc()).all()
 
     # Fallback adicional por nombre del tecnico (cubre registros legacy con ids inconsistentes).
-    base_fallback = Actividad.query.order_by(
+    base_fallback = Actividad.query.options(joinedload(Actividad.vinculo_instalacion)).order_by(
         Actividad.fecha_inicio.asc().nullslast(),
         Actividad.id_actividad.desc()
     ).all()
@@ -312,7 +382,11 @@ def obtener_actividades_mias():
 # Actualizar actividad
 @actividades_blueprint.route('/<int:id_actividad>', methods=['PUT'])
 def actualizar_actividad(id_actividad):
-    data = request.json
+    data = dict(request.json or {})
+    try:
+        _preparar_fechas(data)
+    except ValueError as exc:
+        return jsonify({'message': str(exc)}), 400
     actividad = Actividad.query.get_or_404(id_actividad)
 
     actividad.nombre_actividad = data.get('nombre_actividad', actividad.nombre_actividad)
@@ -339,6 +413,12 @@ def actualizar_actividad(id_actividad):
         ]
     )
 
+    try:
+        with db.session.no_autoflush:
+            _vincular_instalacion(actividad, data)
+    except ValueError as exc:
+        db.session.rollback()
+        return jsonify({'message': str(exc)}), 400
     db.session.commit()
     emit_actividad_event("actividad_updated", {
         "action": "updated",
@@ -355,6 +435,8 @@ def actualizar_actividad(id_actividad):
 @actividades_blueprint.route('/<int:id_actividad>', methods=['DELETE'])
 def eliminar_actividad(id_actividad):
     actividad = Actividad.query.get_or_404(id_actividad)
+    if actividad.vinculo_instalacion and db.session.get(ArmadoInstalacionConfirmada, actividad.vinculo_instalacion.armado_id):
+        return jsonify({'message': 'La actividad pertenece a una instalacion confirmada y no se puede eliminar.'}), 400
     payload = {
         "action": "deleted",
         "id_actividad": actividad.id_actividad,

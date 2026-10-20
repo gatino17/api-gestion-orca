@@ -1082,6 +1082,15 @@ class Armado(db.Model):
         )
 
 
+class ArmadoActividadInstalacion(db.Model):
+    __tablename__ = 'armados_actividades_instalacion'
+
+    actividad_id = db.Column(db.Integer, db.ForeignKey('actividades.id_actividad', ondelete='CASCADE'), primary_key=True)
+    armado_id = db.Column(db.Integer, db.ForeignKey('armados.id_armado', ondelete='CASCADE'), nullable=False, index=True)
+    actividad = db.relationship('Actividad', backref=db.backref('vinculo_instalacion', uselist=False, cascade='all, delete-orphan'))
+    armado = db.relationship('Armado', backref=db.backref('actividades_instalacion', cascade='all, delete-orphan'))
+
+
 class ArmadoInstalacionConfirmada(db.Model):
     __tablename__ = 'armados_instalaciones_confirmadas'
 

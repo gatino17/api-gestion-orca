@@ -2,7 +2,7 @@
 from ..models import ActaEntrega, Armado, ArmadoParticipacion, ArmadoMaterial, ArmadoGuiaSalida, Centro, Cliente, User, EquiposIP, RetiroTerreno, RetiroTerrenoEquipo
 from ..models import ArmadoCajaMovimiento
 from ..database import db
-from ..socketio_ext import emit_armado_event
+from ..socketio_ext import emit_armado_event, emit_actividad_event
 from datetime import datetime
 from collections import defaultdict
 from types import SimpleNamespace
@@ -13,8 +13,9 @@ import json
 from sqlalchemy import and_, or_, func
 from sqlalchemy.orm import joinedload
 from sqlalchemy.exc import IntegrityError
-from ..models import ArmadoInstalacionConfirmada
-from ..armado_seguimiento import hoy_chile, resumen_despacho, puede_confirmar_instalacion, serializar_instalacion
+from ..models import ArmadoInstalacionConfirmada, ArmadoActividadInstalacion, Actividad
+from ..armado_seguimiento import (hoy_chile, resumen_despacho, puede_confirmar_instalacion, clave_bulto,
+                                serializar_instalacion, actividad_instalacion_vigente, serializar_asignacion)
 
 armados_blueprint = Blueprint('armados', __name__)
 SECRET_KEY = "remoto753524"
@@ -579,10 +580,18 @@ def listar_armados():
         actas_por_armado[acta.armado_id].append({'id_acta_entrega': acta.id_acta_entrega,
             'fecha_registro': acta.fecha_registro.isoformat(), 'firmada': bool(acta.firma_recepciona)})
     usuario_seguimiento = usuario_actual_desde_token()
+    vinculos_por_armado = defaultdict(list)
+    for vinculo in ArmadoActividadInstalacion.query.options(
+        joinedload(ArmadoActividadInstalacion.actividad).joinedload(Actividad.encargado_principal),
+        joinedload(ArmadoActividadInstalacion.actividad).joinedload(Actividad.encargado_ayudante),
+        joinedload(ArmadoActividadInstalacion.actividad).selectinload(Actividad.encargados),
+    ).filter(ArmadoActividadInstalacion.armado_id.in_(armado_ids)).all():
+        vinculos_por_armado[vinculo.armado_id].append(vinculo)
 
     resultado = []
     for armado in armados:
         armado_id = int(armado.id_armado or 0)
+        actividad_instalacion = actividad_instalacion_vigente(armado, vinculos_por_armado.get(armado_id, []))
         centro_id_actual = int(armado.centro_id or 0)
         participaciones_armado = participaciones_por_armado.get(armado_id, [])
         historial_tecnicos = [
@@ -661,7 +670,8 @@ def listar_armados():
                 'despacho': resumen_despacho(guias_por_armado.get(armado_id, []), list(cajas_estado_map) or [*cajas_equipos, *cajas_materiales], armado.total_cajas_manual),
                 'instalacion': serializar_instalacion(instalaciones.get(armado_id)),
                 'actas': actas_por_armado.get(armado_id, []),
-                'puede_confirmar_instalacion': puede_confirmar_instalacion(usuario_seguimiento, armado, [part.tecnico_id for part in tecnicos_activos_por_armado.get(armado_id, [])]),
+                'asignacion_instalacion': serializar_asignacion(actividad_instalacion),
+                'puede_confirmar_instalacion': puede_confirmar_instalacion(usuario_seguimiento, actividad_instalacion),
             },
             "check_tecnico_fecha": armado.check_tecnico_fecha,
             "observacion": armado.observacion,
@@ -686,11 +696,11 @@ def confirmar_instalacion_armado(id_armado):
     usuario = usuario_actual_desde_token()
     if not usuario:
         return jsonify({'message': 'Debes iniciar sesion.'}), 401
-    armado = db.session.get(Armado, id_armado)
+    armado = Armado.query.filter_by(id_armado=id_armado).with_for_update().first()
     if not armado:
         return jsonify({'message': 'Armado no encontrado.'}), 404
-    activos = [part.tecnico_id for part in _participaciones_activas_armado(id_armado)]
-    if not puede_confirmar_instalacion(usuario, armado, activos):
+    actividad_instalacion = actividad_instalacion_vigente(armado, armado.actividades_instalacion)
+    if not puede_confirmar_instalacion(usuario, actividad_instalacion):
         return jsonify({'message': 'No tienes permiso para confirmar esta instalacion.'}), 403
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
@@ -722,6 +732,9 @@ def confirmar_instalacion_armado(id_armado):
     existente = db.session.get(ArmadoInstalacionConfirmada, id_armado)
     if existente:
         return respuesta_existente(existente)
+    asignacion = serializar_asignacion(actividad_instalacion)
+    if not asignacion or not asignacion['asignada']:
+        return jsonify({'message': 'Primero asigna los instaladores y la fecha en una actividad de Instalacion del Calendario.'}), 400
     if armado.estado != 'finalizado':
         return jsonify({'message': 'Primero debes finalizar el armado.'}), 400
     cajas = list(parse_cajas_estado(armado.cajas_estado_json)) or [
@@ -731,7 +744,7 @@ def confirmar_instalacion_armado(id_armado):
     if not despacho['completo']:
         return jsonify({'message': 'Completa el despacho de los bultos antes de confirmar la instalacion.'}), 400
     primer_movimiento = db.session.query(func.min(ArmadoCajaMovimiento.fecha)).filter_by(armado_id=id_armado).scalar()
-    fechas_previas = [valor for valor in (armado.fecha_asignacion, armado.fecha_inicio, armado.fecha_cierre,
+    fechas_previas = [valor for valor in (armado.fecha_asignacion, armado.fecha_inicio, armado.fecha_cierre, actividad_instalacion.fecha_inicio,
                                         primer_movimiento.date() if primer_movimiento else None) if valor]
     fechas_previas.append(datetime.strptime(despacho['fecha_ultima_salida'], '%Y-%m-%d').date())
     if fecha > hoy_chile() or any(fecha < valor for valor in fechas_previas):
@@ -742,6 +755,7 @@ def confirmar_instalacion_armado(id_armado):
         observacion=observacion,
     )
     db.session.add(registro)
+    actividad_instalacion.estado = 'Finalizado'
     try:
         db.session.commit()
     except IntegrityError:
@@ -751,6 +765,8 @@ def confirmar_instalacion_armado(id_armado):
             return respuesta_existente(existente)
         raise
     emitir_actualizacion_armado(id_armado, 'instalacion_confirmada')
+    emit_actividad_event('actividad_updated', {'action': 'updated', 'id_actividad': actividad_instalacion.id_actividad,
+                                             'armado_id': id_armado, 'centro_id': armado.centro_id, 'estado': 'Finalizado'})
     return jsonify({'instalacion': serializar_instalacion(registro)}), 201
 
 
@@ -1092,6 +1108,96 @@ def actualizar_armado(id_armado):
     db.session.commit()
     emitir_actualizacion_armado(armado.id_armado, "armado")
     return jsonify({"message": "Armado actualizado"}), 200
+
+
+def _cajas_con_contenido_armado(armado):
+    movimientos = ArmadoCajaMovimiento.query.filter_by(armado_id=armado.id_armado).order_by(
+        ArmadoCajaMovimiento.fecha.desc(), ArmadoCajaMovimiento.id_movimiento.desc()).all()
+    vistos, cajas = set(), []
+    for mov in movimientos:
+        tipo = str(mov.tipo or '').lower()
+        item = str(mov.nombre_item or '').strip().lower() if tipo == 'material' else str(mov.item_id or mov.numero_serie or mov.nombre_item or '')
+        key = (tipo, item)
+        if not item or key in vistos:
+            continue
+        vistos.add(key)
+        if tipo == 'material' and float(mov.cantidad or 0) <= 0:
+            continue
+        cajas.append(mov.caja)
+    cajas.extend(item.caja for item in EquiposIP.query.filter_by(centro_id=armado.centro_id).all())
+    cajas.extend(item.caja for item in ArmadoMaterial.query.filter_by(armado_id=armado.id_armado).all())
+    return cajas
+
+
+def _gestionar_caja_admin(id_armado, accion):
+    usuario = usuario_actual_desde_token()
+    if not usuario:
+        return jsonify({'message': 'Debes iniciar sesion.'}), 401
+    if str(usuario.rol or '').strip().lower() != 'admin':
+        return jsonify({'message': 'Solo un administrador puede gestionar bultos desde este detalle.'}), 403
+    data = request.get_json(silent=True)
+    caja = data.get('caja') if isinstance(data, dict) else None
+    if not isinstance(caja, str) or not caja.strip() or not clave_bulto(caja):
+        return jsonify({'message': 'Selecciona un bulto real.'}), 400
+    armado = Armado.query.filter_by(id_armado=id_armado).with_for_update().first()
+    if not armado:
+        return jsonify({'message': 'Armado no encontrado.'}), 404
+    estados = parse_cajas_estado(armado.cajas_estado_json)
+    if not estados:
+        # Preserve every legacy box when initializing the explicit state map.
+        cajas = _cajas_con_contenido_armado(armado)
+        estados = {nombre: 'abierta' for nombre in normalizar_lista_cajas(cajas) if clave_bulto(nombre)}
+    nombre = next((nombre for nombre in estados if clave_bulto(nombre) == clave_bulto(caja)), None)
+    if nombre is None:
+        return jsonify({'message': 'Ese bulto no pertenece a este armado.'}), 404
+    aliases = [key for key in estados if clave_bulto(key) == clave_bulto(nombre)]
+    if accion == 'eliminar':
+        for guia in ArmadoGuiaSalida.query.filter_by(armado_id=id_armado).all():
+            try:
+                cajas_guia = json.loads(guia.cajas_json or '[]')
+            except (ValueError, TypeError):
+                return jsonify({'message': 'No se pudieron validar las guias de despacho. Revisa sus bultos antes de eliminar.'}), 409
+            if not isinstance(cajas_guia, list) or any(not isinstance(item, str) for item in cajas_guia):
+                return jsonify({'message': 'Revisa los bultos de las guias de despacho antes de eliminar.'}), 409
+            if any(clave_bulto(item) == clave_bulto(nombre) for item in cajas_guia):
+                return jsonify({'message': 'Este bulto figura en una guia de despacho y no se puede eliminar.'}), 409
+        if any(clave_bulto(item) == clave_bulto(nombre) for item in _cajas_con_contenido_armado(armado)):
+            return jsonify({'message': 'El bulto tiene equipos o materiales asignados. Reasigna su contenido antes de eliminarlo.'}), 409
+        for key in aliases:
+            del estados[key]
+        # An explicit virtual-only map prevents old movement history recreating the last deleted box.
+        if not any(clave_bulto(key) for key in estados):
+            estados['Pendiente de caja'] = 'abierta'
+        armado.total_cajas_manual = len({clave_bulto(key) for key in estados if clave_bulto(key)})
+        cambiado = True
+    else:
+        nuevo_estado = 'cerrada' if accion == 'cerrar' else 'abierta'
+        cambiado = any(estados[key] != nuevo_estado for key in aliases)
+        for key in aliases:
+            estados[key] = nuevo_estado
+    if cambiado:
+        armado.cajas_estado_json = json.dumps(estados, ensure_ascii=False)
+        db.session.commit()
+        current_app.logger.info('Gestion administrativa de bulto: accion=%s armado=%s caja=%s usuario=%s', accion, id_armado, nombre, usuario.id)
+        emitir_actualizacion_armado(id_armado, 'caja_' + accion + '_admin')
+    return jsonify({'id_armado': id_armado, 'caja': nombre, 'estado': estados.get(nombre),
+                    'eliminada': accion == 'eliminar', 'cajas_estado': estados,
+                    'total_cajas': len({clave_bulto(key) for key in estados if clave_bulto(key)})}), 200
+
+
+@armados_blueprint.route('/<int:id_armado>/cajas/cerrar', methods=['POST'])
+def cerrar_caja_admin(id_armado):
+    return _gestionar_caja_admin(id_armado, 'cerrar')
+
+
+@armados_blueprint.route('/<int:id_armado>/cajas/abrir', methods=['POST'])
+def abrir_caja_admin(id_armado):
+    return _gestionar_caja_admin(id_armado, 'abrir')
+
+
+@armados_blueprint.route('/<int:id_armado>/cajas', methods=['DELETE'])
+def eliminar_caja_admin(id_armado):
+    return _gestionar_caja_admin(id_armado, 'eliminar')
 
 
 @armados_blueprint.route('/<int:id_armado>', methods=['DELETE'])
