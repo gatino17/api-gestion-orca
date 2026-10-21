@@ -6,6 +6,7 @@ from flask import Blueprint, jsonify, request
 
 from ..database import db
 from ..models import ActaEntrega, Centro, PermisoTrabajo
+from ..armado_seguimiento import notificar_cambio_informe, completar_termino_desde_informe
 
 
 permisos_trabajo_blueprint = Blueprint('permisos_trabajo', __name__)
@@ -254,7 +255,10 @@ def crear_permiso_trabajo():
             centro.cantidad_radares = cantidad_radares
 
         db.session.add(permiso)
+        acta_actual = db.session.get(ActaEntrega, permiso.acta_entrega_id) if permiso.acta_entrega_id else None
+        actividades_actualizadas = completar_termino_desde_informe(acta_actual)
         db.session.commit()
+        notificar_cambio_informe([permiso.acta_entrega.armado_id if permiso.acta_entrega else None], actividades_actualizadas)
         return jsonify({"message": "Permiso de trabajo creado", "permiso": _serialize_permiso(permiso)}), 201
     except ValueError as e:
         db.session.rollback()
@@ -271,6 +275,8 @@ def actualizar_permiso_trabajo(id_permiso_trabajo):
         permiso = PermisoTrabajo.query.get(id_permiso_trabajo)
         if not permiso:
             return jsonify({"error": "Permiso de trabajo no encontrado"}), 404
+
+        armado_id_anterior = permiso.acta_entrega.armado_id if permiso.acta_entrega else None
 
         if "centro_id" in data and data.get("centro_id"):
             centro = Centro.query.get(data.get("centro_id"))
@@ -358,7 +364,11 @@ def actualizar_permiso_trabajo(id_permiso_trabajo):
                 if centro:
                     centro.cantidad_radares = cantidad_radares
 
+        acta_actual = db.session.get(ActaEntrega, permiso.acta_entrega_id) if permiso.acta_entrega_id else None
+        actividades_actualizadas = completar_termino_desde_informe(acta_actual)
         db.session.commit()
+        db.session.expire(permiso, ['acta_entrega'])
+        notificar_cambio_informe([armado_id_anterior, permiso.acta_entrega.armado_id if permiso.acta_entrega else None], actividades_actualizadas)
         return jsonify({"message": "Permiso de trabajo actualizado", "permiso": _serialize_permiso(permiso)}), 200
     except ValueError as e:
         db.session.rollback()
@@ -374,8 +384,10 @@ def eliminar_permiso_trabajo(id_permiso_trabajo):
         permiso = PermisoTrabajo.query.get(id_permiso_trabajo)
         if not permiso:
             return jsonify({"error": "Permiso de trabajo no encontrado"}), 404
+        armado_id = permiso.acta_entrega.armado_id if permiso.acta_entrega else None
         db.session.delete(permiso)
         db.session.commit()
+        notificar_cambio_informe([armado_id])
         return jsonify({"message": "Permiso de trabajo eliminado"}), 200
     except Exception as e:
         db.session.rollback()

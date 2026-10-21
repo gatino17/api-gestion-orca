@@ -26,6 +26,8 @@ models = importlib.import_module(NAMESPACE + '.models')
 db = importlib.import_module(NAMESPACE + '.database').db
 routes = importlib.import_module(NAMESPACE + '.routes.armados_routes')
 actividades_routes = importlib.import_module(NAMESPACE + '.routes.actividades_routes')
+actas_routes = importlib.import_module(NAMESPACE + '.routes.actas_entrega_routes')
+permisos_routes = importlib.import_module(NAMESPACE + '.routes.permisos_trabajo_routes')
 service = importlib.import_module(NAMESPACE + '.armado_seguimiento')
 TODAY = date(2026, 10, 20)
 
@@ -110,10 +112,13 @@ class SeguimientoRoutesTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = Flask('armado_seguimiento_tests')
-        cls.app.config.update(TESTING=True, SQLALCHEMY_DATABASE_URI='sqlite:///:memory:', SQLALCHEMY_TRACK_MODIFICATIONS=False)
+        cls.app.config.update(TESTING=True, SECRET_KEY=routes.SECRET_KEY,
+                              SQLALCHEMY_DATABASE_URI='sqlite:///:memory:', SQLALCHEMY_TRACK_MODIFICATIONS=False)
         db.init_app(cls.app)
         cls.app.register_blueprint(routes.armados_blueprint, url_prefix='/armados')
         cls.app.register_blueprint(actividades_routes.actividades_blueprint, url_prefix='/actividades')
+        cls.app.register_blueprint(actas_routes.actas_entrega_blueprint, url_prefix='/actas')
+        cls.app.register_blueprint(permisos_routes.permisos_trabajo_blueprint, url_prefix='/permisos')
 
     def setUp(self):
         self.context = self.app.app_context()
@@ -171,6 +176,142 @@ class SeguimientoRoutesTest(unittest.TestCase):
     def confirmar(self, name='Admin', **changes):
         return self.client.post('/armados/1/instalacion-confirmada', json={**self.payload, **changes}, headers=self.headers(name))
 
+    def crear_informe_instalacion(self):
+        acta = models.ActaEntrega(centro_id=1, armado_id=1, fecha_registro=date(2026, 10, 19),
+                                 tipo_instalacion='instalacion', tecnico_1='Tecnico')
+        permiso = models.PermisoTrabajo(centro_id=1, acta_entrega=acta, fecha_ingreso=date(2026, 10, 19),
+                                       fecha_salida=TODAY, tecnico_1='Tecnico', firma_tecnico_1='firma-tecnico',
+                                       recepciona_nombre='Receptor', firma_recepciona='firma-receptor',
+                                       descripcion_trabajo='Sistema instalado y probado')
+        db.session.add_all([acta, permiso])
+        db.session.commit()
+        return acta, permiso
+
+    def test_existing_complete_mobile_report_marks_installed_without_writing_on_get(self):
+        acta, permiso = self.crear_informe_instalacion()
+        for usuario in ['Admin', 'Inventario']:
+            result = self.client.get('/armados/', headers=self.headers(usuario)).get_json()[0]['seguimiento']
+            self.assertEqual(result['instalacion']['fecha_instalacion'], '2026-10-20')
+            self.assertEqual(result['instalacion']['origen'], 'informe_instalacion')
+            self.assertEqual(result['instalacion']['tecnicos'], ['Tecnico'])
+            self.assertEqual(result['instalacion']['acta_entrega_id'], acta.id_acta_entrega)
+            self.assertEqual(result['instalacion']['permiso_trabajo_id'], permiso.id_permiso_trabajo)
+        self.assertEqual(models.ArmadoInstalacionConfirmada.query.count(), 0)
+
+    def test_installation_report_includes_installers_not_armado_builders(self):
+        acta, permiso = self.crear_informe_instalacion()
+        permiso.tecnico_1 = 'Gustavo Mella'
+        permiso.tecnico_2 = 'Renato Vega'
+        permiso.firma_tecnico_2 = 'firma-renato'
+        permiso.firmas_tecnicos_adicionales = json.dumps([
+            {'nombre': 'Gustavo Mella', 'firma': 'firma'}, {'nombre': 'Apoyo instalacion', 'firma': 'firma-apoyo'},
+        ])
+        db.session.commit()
+        tracking = self.client.get('/armados/').get_json()[0]['seguimiento']
+        self.assertEqual(tracking['instalacion']['tecnicos'], ['Gustavo Mella', 'Renato Vega', 'Apoyo instalacion'])
+        self.assertNotIn('Tecnico', tracking['instalacion']['tecnicos'])
+
+    def test_installation_report_drafts_and_missing_signatures_do_not_finish_armado(self):
+        acta, permiso = self.crear_informe_instalacion()
+        for campo, valor in [('fecha_salida', None), ('firma_tecnico_1', ''), ('firma_recepciona', ''),
+                              ('recepciona_nombre', ''), ('descripcion_trabajo', '  '),
+                              ('firmas_tecnicos_adicionales', '[{"nombre":"Apoyo","firma":null}]'),
+                              ('firmas_tecnicos_adicionales', 'broken')]:
+            with self.subTest(campo=campo, valor=valor):
+                original = getattr(permiso, campo)
+                setattr(permiso, campo, valor)
+                db.session.commit()
+                self.assertIsNone(self.client.get('/armados/').get_json()[0]['seguimiento']['instalacion'])
+                setattr(permiso, campo, original)
+                db.session.commit()
+        permiso.tecnico_2 = 'Apoyo'
+        db.session.commit()
+        self.assertIsNone(self.client.get('/armados/').get_json()[0]['seguimiento']['instalacion'])
+
+    def test_backdated_installation_retains_actual_date_and_chile_registration_day(self):
+        acta, permiso = self.crear_informe_instalacion()
+        acta.updated_at = datetime(2026, 10, 20, 2, 30)
+        permiso.updated_at = datetime(2026, 10, 20, 2)
+        permiso.fecha_ingreso = date(2026, 10, 16)
+        permiso.fecha_salida = date(2026, 10, 17)
+        acta.fecha_registro = date(2026, 10, 16)
+        db.session.commit()
+        registro = self.client.get('/armados/').get_json()[0]['seguimiento']['instalacion']
+        self.assertEqual(registro['fecha_instalacion'], '2026-10-17')
+        self.assertEqual(registro['fecha_registro_seguimiento'], '2026-10-19')
+
+    def test_report_rejects_future_and_out_of_order_dates(self):
+        acta, permiso = self.crear_informe_instalacion()
+        for fecha in [TODAY + timedelta(days=1), date(2026, 10, 18), date(2026, 9, 1)]:
+            with self.subTest(fecha=fecha):
+                permiso.fecha_salida = fecha
+                db.session.commit()
+                self.assertIsNone(self.client.get('/armados/').get_json()[0]['seguimiento']['instalacion'])
+
+    def test_reapuntamiento_or_unlinked_report_does_not_finish_armado(self):
+        acta, permiso = self.crear_informe_instalacion()
+        acta.tipo_instalacion = 'reapuntamiento'
+        db.session.commit()
+        self.assertIsNone(self.client.get('/armados/').get_json()[0]['seguimiento']['instalacion'])
+        acta.tipo_instalacion = 'instalacion'
+        acta.armado_id = None
+        db.session.commit()
+        self.assertIsNone(self.client.get('/armados/').get_json()[0]['seguimiento']['instalacion'])
+
+    def test_report_only_finishes_the_linked_armado_not_other_armados_in_center(self):
+        self.crear_informe_instalacion()
+        db.session.add(models.Armado(id_armado=2, centro_id=1, tecnico_id=self.users['Tecnico'].id,
+                                    estado='finalizado', fecha_asignacion=date(2026, 10, 1)))
+        db.session.commit()
+        results = {item['id_armado']: item['seguimiento'] for item in self.client.get('/armados/').get_json()}
+        self.assertIsNotNone(results[1]['instalacion'])
+        self.assertIsNone(results[2]['instalacion'])
+
+    def test_manual_installation_confirmation_takes_precedence_over_report(self):
+        self.assertEqual(self.confirmar().status_code, 201)
+        self.crear_informe_instalacion()
+        instalada = self.client.get('/armados/').get_json()[0]['seguimiento']['instalacion']
+        self.assertEqual(instalada['confirmado_por_nombre'], 'Admin')
+        self.assertNotIn('origen', instalada)
+
+    def test_saving_and_deleting_mobile_report_notifies_home(self):
+        acta, permiso = self.crear_informe_instalacion()
+        permiso_id = permiso.id_permiso_trabajo
+        socket.emit_armado_event.reset_mock()
+        response = self.client.put('/permisos/{}'.format(permiso_id), json={'descripcion_trabajo': 'Instalado'}, headers=self.headers())
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(any(args[0] == 'armado_updated' and args[1]['armado_id'] == 1
+                            for args, kwargs in socket.emit_armado_event.call_args_list))
+        socket.emit_armado_event.reset_mock()
+        response = self.client.delete('/permisos/{}'.format(permiso_id), headers=self.headers())
+        self.assertEqual(response.status_code, 200)
+        socket.emit_armado_event.assert_called_once()
+        self.assertIsNone(self.client.get('/armados/').get_json()[0]['seguimiento']['instalacion'])
+
+    def test_mobile_report_creation_completes_existing_acta(self):
+        acta = models.ActaEntrega(centro_id=1, armado_id=1, fecha_registro=date(2026, 10, 19),
+                                 tipo_instalacion='instalacion', tecnico_1='Tecnico', firma_tecnico_1='firma',
+                                 recepciona_nombre='Receptor', firma_recepciona='firma')
+        db.session.add(acta)
+        db.session.commit()
+        response = self.client.post('/permisos/', json={
+            'centro_id': 1, 'acta_entrega_id': acta.id_acta_entrega, 'fecha_ingreso': '2026-10-19',
+            'fecha_salida': '2026-10-20', 'descripcion_trabajo': 'Sistema instalado',
+        }, headers=self.headers('Tecnico'))
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(self.client.get('/armados/').get_json()[0]['seguimiento']['instalacion']['origen'], 'informe_instalacion')
+        self.assertEqual(self.actividad.fecha_termino, TODAY)
+
+    def test_linking_existing_acta_to_armado_refreshes_home(self):
+        acta, permiso = self.crear_informe_instalacion()
+        acta.armado_id = None
+        db.session.commit()
+        socket.emit_armado_event.reset_mock()
+        response = self.client.put('/actas/{}'.format(acta.id_acta_entrega), json={'armado_id': 1}, headers=self.headers())
+        self.assertEqual(response.status_code, 200)
+        socket.emit_armado_event.assert_called_once()
+        self.assertIsNotNone(self.client.get('/armados/').get_json()[0]['seguimiento']['instalacion'])
+
     def test_get_has_real_dates_dispatch_and_does_not_infer_installation(self):
         result = self.client.get('/armados/', headers=self.headers()).get_json()[0]
         tracking = result['seguimiento']
@@ -182,6 +323,86 @@ class SeguimientoRoutesTest(unittest.TestCase):
         self.assertIsNone(tracking['instalacion'])
         self.assertTrue(tracking['puede_confirmar_instalacion'])
         self.assertFalse(self.client.get('/armados/', headers=self.headers('Otro')).get_json()[0]['seguimiento']['puede_confirmar_instalacion'])
+
+    def test_existing_report_supplies_calendar_end_date_without_writing_on_read(self):
+        self.crear_informe_instalacion()
+        for path in ['/actividades/', '/actividades/mias']:
+            result = self.client.get(path, headers=self.headers('Tecnico')).get_json()
+            actividad = next(item for item in result if item['id_actividad'] == self.actividad.id_actividad)
+            self.assertEqual(actividad['fecha_termino'], '2026-10-20')
+        self.assertIsNone(self.actividad.fecha_termino)
+
+    def test_mobile_finalization_persists_missing_calendar_end_date(self):
+        self.crear_informe_instalacion()
+        response = self.client.put('/actividades/{}'.format(self.actividad.id_actividad), json={'estado': 'Finalizado'})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.actividad.fecha_termino, TODAY)
+
+    def test_reassigned_activity_does_not_copy_end_date_from_previous_armado_report(self):
+        self.crear_informe_instalacion()
+        db.session.add(models.Armado(id_armado=2, centro_id=1, tecnico_id=self.users['Tecnico'].id,
+                                    fecha_asignacion=date(2026, 10, 1), estado='finalizado'))
+        db.session.commit()
+        response = self.client.put('/actividades/{}'.format(self.actividad.id_actividad), json={'armado_id': 2})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.actividad.vinculo_instalacion.armado_id, 2)
+        self.assertIsNone(self.actividad.fecha_termino)
+
+    def test_report_save_fills_calendar_end_date_and_emits_activity_event(self):
+        acta, permiso = self.crear_informe_instalacion()
+        socket.emit_actividad_event.reset_mock()
+        response = self.client.put('/permisos/{}'.format(permiso.id_permiso_trabajo), json={'descripcion_trabajo': 'Instalacion finalizada'})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.actividad.fecha_termino, TODAY)
+        socket.emit_actividad_event.assert_called_once_with('actividad_updated', {
+            'action': 'updated', 'id_actividad': self.actividad.id_actividad,
+        })
+
+    def test_report_does_not_overwrite_previously_entered_calendar_end_date(self):
+        acta, permiso = self.crear_informe_instalacion()
+        self.actividad.fecha_termino = date(2026, 10, 19)
+        db.session.commit()
+        self.client.put('/permisos/{}'.format(permiso.id_permiso_trabajo), json={'descripcion_trabajo': 'Finalizado'})
+        self.assertEqual(self.actividad.fecha_termino, date(2026, 10, 19))
+        self.assertEqual(self.client.get('/actividades/').get_json()[0]['fecha_termino'], '2026-10-19')
+
+    def test_explicit_activity_report_without_armado_still_supplies_end_date(self):
+        acta, permiso = self.crear_informe_instalacion()
+        self.actividad.vinculo_instalacion = None
+        acta.armado_id = None
+        acta.actividad_id = self.actividad.id_actividad
+        db.session.commit()
+        self.assertEqual(self.client.get('/actividades/').get_json()[0]['fecha_termino'], '2026-10-20')
+
+    def test_report_does_not_complete_unrelated_same_center_activities(self):
+        acta, permiso = self.crear_informe_instalacion()
+        otra = models.Actividad(nombre_actividad='Otra instalacion', area='Instalacion', centro_id=1,
+                                 fecha_inicio=date(2026, 10, 19), estado='En progreso')
+        db.session.add(otra)
+        db.session.commit()
+        result = {item['id_actividad']: item for item in self.client.get('/actividades/').get_json()}
+        self.assertEqual(result[self.actividad.id_actividad]['fecha_termino'], '2026-10-20')
+        self.assertIsNone(result[otra.id_actividad]['fecha_termino'])
+
+    def test_incomplete_report_does_not_supply_calendar_end_date(self):
+        acta, permiso = self.crear_informe_instalacion()
+        permiso.firma_recepciona = None
+        db.session.commit()
+        self.assertIsNone(self.client.get('/actividades/').get_json()[0]['fecha_termino'])
+
+    def test_cancelled_non_installation_or_future_activity_is_not_auto_completed(self):
+        acta, permiso = self.crear_informe_instalacion()
+        original = (self.actividad.area, self.actividad.estado, self.actividad.fecha_inicio)
+        for campo, valor in [('estado', 'Cancelado'), ('area', 'Mantencion'), ('fecha_inicio', TODAY + timedelta(days=1))]:
+            with self.subTest(campo=campo):
+                self.actividad.area, self.actividad.estado, self.actividad.fecha_inicio = original
+                setattr(self.actividad, campo, valor)
+                db.session.commit()
+                self.assertIsNone(self.client.get('/actividades/').get_json()[0]['fecha_termino'])
+
+    def test_manual_installation_confirmation_fills_calendar_end_date(self):
+        self.assertEqual(self.confirmar().status_code, 201)
+        self.assertEqual(self.actividad.fecha_termino, TODAY)
 
     def test_registered_receipt_updates_home_stage_without_confirming_installation(self):
         guia = models.ArmadoGuiaSalida.query.one()

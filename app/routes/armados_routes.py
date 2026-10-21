@@ -11,11 +11,12 @@ import jwt
 import re
 import json
 from sqlalchemy import and_, or_, func
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import joinedload, selectinload
 from sqlalchemy.exc import IntegrityError
 from ..models import ArmadoInstalacionConfirmada, ArmadoActividadInstalacion, Actividad
 from ..armado_seguimiento import (hoy_chile, resumen_despacho, puede_confirmar_instalacion, clave_bulto,
-                                serializar_instalacion, actividad_instalacion_vigente, serializar_asignacion)
+                                serializar_instalacion, actividad_instalacion_vigente, serializar_asignacion,
+                                instalacion_desde_informe)
 
 armados_blueprint = Blueprint('armados', __name__)
 SECRET_KEY = "remoto753524"
@@ -576,9 +577,13 @@ def listar_armados():
     for guia in ArmadoGuiaSalida.query.filter(ArmadoGuiaSalida.armado_id.in_(armado_ids)).all():
         guias_por_armado[guia.armado_id].append(guia)
     actas_por_armado = defaultdict(list)
-    for acta in ActaEntrega.query.filter(ActaEntrega.armado_id.in_(armado_ids), ActaEntrega.tipo_instalacion == 'instalacion').order_by(ActaEntrega.fecha_registro.desc()).all():
+    informes_por_armado = defaultdict(list)
+    for acta in ActaEntrega.query.options(selectinload(ActaEntrega.permisos_trabajo)).filter(
+            ActaEntrega.armado_id.in_(armado_ids), ActaEntrega.tipo_instalacion == 'instalacion'
+    ).order_by(ActaEntrega.fecha_registro.desc()).all():
         actas_por_armado[acta.armado_id].append({'id_acta_entrega': acta.id_acta_entrega,
             'fecha_registro': acta.fecha_registro.isoformat(), 'firmada': bool(acta.firma_recepciona)})
+        informes_por_armado[acta.armado_id].append(acta)
     usuario_seguimiento = usuario_actual_desde_token()
     vinculos_por_armado = defaultdict(list)
     for vinculo in ArmadoActividadInstalacion.query.options(
@@ -591,6 +596,12 @@ def listar_armados():
     resultado = []
     for armado in armados:
         armado_id = int(armado.id_armado or 0)
+        instalacion = serializar_instalacion(instalaciones.get(armado_id))
+        if not instalacion:
+            informes = [registro for acta in informes_por_armado.get(armado_id, [])
+                        for permiso in acta.permisos_trabajo
+                        for registro in [instalacion_desde_informe(armado, acta, permiso)] if registro]
+            instalacion = max(informes, key=lambda item: (item['fecha_instalacion'], item['permiso_trabajo_id'])) if informes else None
         actividad_instalacion = actividad_instalacion_vigente(armado, vinculos_por_armado.get(armado_id, []))
         centro_id_actual = int(armado.centro_id or 0)
         participaciones_armado = participaciones_por_armado.get(armado_id, [])
@@ -668,7 +679,7 @@ def listar_armados():
                 'inicio_registrado': bool(armado.fecha_inicio or primera_mov_fecha) or armado.estado in {'en_proceso', 'prefinalizado', 'finalizado'},
                 'fecha_fin_armado': armado.fecha_cierre.isoformat() if armado.fecha_cierre and armado.estado == 'finalizado' else None,
                 'despacho': resumen_despacho(guias_por_armado.get(armado_id, []), list(cajas_estado_map) or [*cajas_equipos, *cajas_materiales], armado.total_cajas_manual),
-                'instalacion': serializar_instalacion(instalaciones.get(armado_id)),
+                'instalacion': instalacion,
                 'actas': actas_por_armado.get(armado_id, []),
                 'asignacion_instalacion': serializar_asignacion(actividad_instalacion),
                 'puede_confirmar_instalacion': puede_confirmar_instalacion(usuario_seguimiento, actividad_instalacion),
@@ -756,6 +767,8 @@ def confirmar_instalacion_armado(id_armado):
     )
     db.session.add(registro)
     actividad_instalacion.estado = 'Finalizado'
+    if not actividad_instalacion.fecha_termino:
+        actividad_instalacion.fecha_termino = fecha
     try:
         db.session.commit()
     except IntegrityError:

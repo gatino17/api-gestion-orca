@@ -4,7 +4,7 @@ from sqlalchemy.orm import joinedload
 import jwt
 import unicodedata
 from ..models import Actividad, Centro, Encargado, User, Armado, ArmadoActividadInstalacion, ArmadoInstalacionConfirmada
-from ..armado_seguimiento import normalizar_estado
+from ..armado_seguimiento import normalizar_estado, fechas_termino_instalacion
 from datetime import date
 from ..database import db
 from ..socketio_ext import emit_actividad_event
@@ -40,10 +40,11 @@ def _usuario_actual_desde_token():
         return None
 
 
-def _serialize_actividad(actividad):
+def _serialize_actividad(actividad, fechas_instalacion=None):
     fecha_reclamo = actividad.fecha_reclamo.isoformat() if getattr(actividad, "fecha_reclamo", None) else None
     fecha_inicio = actividad.fecha_inicio.isoformat() if getattr(actividad, "fecha_inicio", None) else None
-    fecha_termino = actividad.fecha_termino.isoformat() if getattr(actividad, "fecha_termino", None) else None
+    termino = actividad.fecha_termino or (fechas_instalacion or {}).get(actividad.id_actividad)
+    fecha_termino = termino.isoformat() if termino else None
     tecnicos_asignados = []
     tecnico_ids = set()
 
@@ -319,8 +320,9 @@ def crear_actividad():
 # Listar todas las actividades
 @actividades_blueprint.route('/', methods=['GET'])
 def obtener_actividades():
-    actividades = Actividad.query.options(joinedload(Actividad.vinculo_instalacion)).all()
-    return jsonify([_serialize_actividad(actividad) for actividad in actividades]), 200
+    actividades = Actividad.query.options(joinedload(Actividad.vinculo_instalacion).joinedload(ArmadoActividadInstalacion.armado)).all()
+    fechas = fechas_termino_instalacion(actividades)
+    return jsonify([_serialize_actividad(actividad, fechas) for actividad in actividades]), 200
 
 
 @actividades_blueprint.route('/mias', methods=['GET'])
@@ -332,7 +334,7 @@ def obtener_actividades_mias():
     estado = (request.args.get("estado") or "").strip()
     area = (request.args.get("area") or "").strip()
     perfil = Encargado.query.filter_by(user_id=usuario.id).first()
-    query = Actividad.query.options(joinedload(Actividad.vinculo_instalacion))
+    query = Actividad.query.options(joinedload(Actividad.vinculo_instalacion).joinedload(ArmadoActividadInstalacion.armado))
 
     # Soporta ambos esquemas:
     # - tecnico_* guardando id_encargado (modelo normal)
@@ -362,7 +364,7 @@ def obtener_actividades_mias():
     actividades = query.order_by(Actividad.fecha_inicio.asc().nullslast(), Actividad.id_actividad.desc()).all()
 
     # Fallback adicional por nombre del tecnico (cubre registros legacy con ids inconsistentes).
-    base_fallback = Actividad.query.options(joinedload(Actividad.vinculo_instalacion)).order_by(
+    base_fallback = Actividad.query.options(joinedload(Actividad.vinculo_instalacion).joinedload(ArmadoActividadInstalacion.armado)).order_by(
         Actividad.fecha_inicio.asc().nullslast(),
         Actividad.id_actividad.desc()
     ).all()
@@ -377,7 +379,8 @@ def obtener_actividades_mias():
         vistos.add(aid)
         merged.append(actividad)
 
-    return jsonify([_serialize_actividad(actividad) for actividad in merged]), 200
+    fechas = fechas_termino_instalacion(merged)
+    return jsonify([_serialize_actividad(actividad, fechas) for actividad in merged]), 200
 
 # Actualizar actividad
 @actividades_blueprint.route('/<int:id_actividad>', methods=['PUT'])
@@ -419,6 +422,10 @@ def actualizar_actividad(id_actividad):
     except ValueError as exc:
         db.session.rollback()
         return jsonify({'message': str(exc)}), 400
+    if not actividad.fecha_termino:
+        db.session.flush()
+        db.session.expire(actividad, ['vinculo_instalacion'])
+        actividad.fecha_termino = fechas_termino_instalacion([actividad]).get(actividad.id_actividad)
     db.session.commit()
     emit_actividad_event("actividad_updated", {
         "action": "updated",

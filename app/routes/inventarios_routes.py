@@ -167,7 +167,9 @@ def _equipos_esperados_bodega(tipo_equipo=None):
         .filter(
             or_(
                 BodegaInventarioEquipo.estado_asignacion.is_(None),
-                db.func.lower(BodegaInventarioEquipo.estado_asignacion) != "asignado_tecnico"
+                db.func.lower(db.func.trim(BodegaInventarioEquipo.estado_asignacion)).notin_(
+                    ["asignado_tecnico", "asignado_armado"]
+                )
             )
         )
     )
@@ -901,6 +903,9 @@ def eliminar_bodega_equipo(id_bodega_equipo):
     try:
         db.session.delete(item)
         db.session.commit()
+        emit_inventario_event("inventario_updated", {
+            "tipo": "equipo_eliminado", "id_bodega_equipo": id_bodega_equipo,
+        })
         return jsonify({"message": "Equipo eliminado"}), 200
     except Exception as e:
         db.session.rollback()

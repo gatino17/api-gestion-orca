@@ -6,6 +6,7 @@ import jwt
 from ..database import db
 from ..models import ActaEntrega, Armado, ArmadoCajaMovimiento, Centro, User
 from ..socketio_ext import emit_armado_event
+from ..armado_seguimiento import notificar_cambio_informe, completar_termino_desde_informe
 
 
 actas_entrega_blueprint = Blueprint('actas_entrega', __name__)
@@ -370,7 +371,9 @@ def crear_acta_entrega():
         )
         _sync_codigo_ponton_si_tecnico(acta, data.get("codigo_ponton"))
         db.session.add(acta)
+        actividades_actualizadas = completar_termino_desde_informe(acta)
         db.session.commit()
+        notificar_cambio_informe([acta.armado_id], actividades_actualizadas)
         if movimientos_devueltos and acta.armado_id:
             emit_armado_event("armado_updated", {
                 "armado_id": acta.armado_id,
@@ -391,6 +394,7 @@ def actualizar_acta_entrega(id_acta_entrega):
         if not acta:
             return jsonify({"error": "Acta de entrega no encontrada"}), 404
         armado_equipos_antes = acta.armado_equipos_json
+        armado_id_anterior = acta.armado_id
 
         if "centro_id" in data and data.get("centro_id"):
             centro = Centro.query.get(data.get("centro_id"))
@@ -461,7 +465,9 @@ def actualizar_acta_entrega(id_acta_entrega):
 
         _sync_codigo_ponton_si_tecnico(acta, data.get("codigo_ponton") if "codigo_ponton" in data else None)
 
+        actividades_actualizadas = completar_termino_desde_informe(acta)
         db.session.commit()
+        notificar_cambio_informe([armado_id_anterior, acta.armado_id], actividades_actualizadas)
         if movimientos_devueltos and acta.armado_id:
             emit_armado_event("armado_updated", {
                 "armado_id": acta.armado_id,
@@ -480,8 +486,10 @@ def eliminar_acta_entrega(id_acta_entrega):
         acta = ActaEntrega.query.get(id_acta_entrega)
         if not acta:
             return jsonify({"error": "Acta de entrega no encontrada"}), 404
+        armado_id = acta.armado_id
         db.session.delete(acta)
         db.session.commit()
+        notificar_cambio_informe([armado_id])
         return jsonify({"message": "Acta de entrega eliminada"}), 200
     except Exception as e:
         db.session.rollback()
