@@ -418,6 +418,7 @@ def crear_bodega_toma():
         )
         db.session.add(item)
         db.session.commit()
+        emit_inventario_event("inventario_updated", {"tipo": "toma_creada", "id_toma": item.id_toma})
         return jsonify({"message": "Toma de inventario creada", "toma": _serialize_bodega_toma(item, include_detalle=True)}), 201
     except Exception as e:
         db.session.rollback()
@@ -540,6 +541,9 @@ def registrar_bodega_toma_escaneo(id_toma):
         toma.updated_at = _now_utc()
         db.session.add(escaneo)
         db.session.commit()
+        emit_inventario_event("inventario_updated", {
+            "tipo": "escaneo_creado", "id_toma": toma.id_toma, "id_escaneo": escaneo.id_escaneo,
+        })
         return jsonify({
             "message": "Escaneo registrado",
             "escaneo": _serialize_bodega_toma_escaneo(escaneo),
@@ -560,6 +564,7 @@ def cerrar_bodega_toma(id_toma):
         item.fecha_cierre = _now_utc()
         item.updated_at = _now_utc()
         db.session.commit()
+        emit_inventario_event("inventario_updated", {"tipo": "toma_cerrada", "id_toma": id_toma})
         return jsonify({"message": "Toma de inventario cerrada", "toma": _serialize_bodega_toma(item, include_detalle=True)}), 200
     except Exception as e:
         db.session.rollback()
@@ -578,6 +583,7 @@ def reabrir_bodega_toma(id_toma):
         item.fecha_cierre = None
         item.updated_at = _now_utc()
         db.session.commit()
+        emit_inventario_event("inventario_updated", {"tipo": "toma_reabierta", "id_toma": id_toma})
         return jsonify({"message": "Toma de inventario reabierta", "toma": _serialize_bodega_toma(item, include_detalle=True)}), 200
     except Exception as e:
         db.session.rollback()
@@ -593,10 +599,14 @@ def eliminar_bodega_toma_escaneo(id_escaneo):
         return jsonify({"error": "Solo admin puede eliminar equipos de un informe cerrado"}), 403
     try:
         toma = escaneo.toma
+        toma_id = escaneo.toma_id
         db.session.delete(escaneo)
         if toma:
             toma.updated_at = _now_utc()
         db.session.commit()
+        emit_inventario_event("inventario_updated", {
+            "tipo": "escaneo_eliminado", "id_toma": toma_id, "id_escaneo": id_escaneo,
+        })
         return jsonify({"message": "Escaneo eliminado"}), 200
     except Exception as e:
         db.session.rollback()
@@ -796,6 +806,9 @@ def crear_bodega_equipos():
             creados.append(item)
 
         db.session.commit()
+        emit_inventario_event("inventario_updated", {
+            "tipo": "equipos_creados", "ids_bodega_equipo": [item.id_bodega_equipo for item in creados],
+        })
         return jsonify({"message": "Equipos creados", "items": [_serialize_bodega_equipo(x) for x in creados]}), 201
     except Exception as e:
         db.session.rollback()
@@ -897,6 +910,9 @@ def actualizar_bodega_equipo(id_bodega_equipo):
             item.observacion_devolucion = data.get("observacion_devolucion")
 
         db.session.commit()
+        emit_inventario_event("inventario_updated", {
+            "tipo": "equipo_actualizado", "id_bodega_equipo": id_bodega_equipo,
+        })
         return jsonify({"message": "Equipo actualizado", "item": _serialize_bodega_equipo(item)}), 200
     except Exception as e:
         db.session.rollback()
@@ -950,6 +966,9 @@ def asignar_bodega_equipo_tecnico(id_bodega_equipo):
         item.observacion_asignacion = data.get("observacion") or item.observacion_asignacion
 
         db.session.commit()
+        emit_inventario_event("inventario_updated", {
+            "tipo": "equipo_asignado", "id_bodega_equipo": id_bodega_equipo,
+        })
         return jsonify({"message": "Equipo asignado a tecnico", "item": _serialize_bodega_equipo(item)}), 200
     except Exception as e:
         db.session.rollback()
@@ -972,6 +991,9 @@ def devolver_bodega_equipo(id_bodega_equipo):
             item.ubicacion = str(data.get("ubicacion")).strip()
 
         db.session.commit()
+        emit_inventario_event("inventario_updated", {
+            "tipo": "equipo_devuelto", "id_bodega_equipo": id_bodega_equipo,
+        })
         return jsonify({"message": "Equipo devuelto a bodega", "item": _serialize_bodega_equipo(item)}), 200
     except Exception as e:
         db.session.rollback()

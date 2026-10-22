@@ -173,3 +173,93 @@ class InventarioBodegaTest(unittest.TestCase):
         self.assertEqual(resumen['total_esperado'], 2)
         self.assertEqual(resumen['encontrados'], 1)
         self.assertEqual(resumen['faltantes'], 1)
+
+    def test_create_scan_and_delete_notify_web_and_mobile_with_the_same_report_id(self):
+        with patch.object(routes, '_usuario_actual_desde_token', return_value=None):
+            response = self.client.post('/inventarios/bodega_tomas/1/escaneos', json={'valor': '31142001'})
+        self.assertEqual(response.status_code, 201)
+        scan_id = response.get_json()['escaneo']['id_escaneo']
+        socket.emit_inventario_event.assert_called_once_with('inventario_updated', {
+            'tipo': 'escaneo_creado', 'id_toma': 1, 'id_escaneo': scan_id,
+        })
+        detalle = self.detalle()
+        self.assertEqual(detalle['resumen']['encontrados'], 1)
+        self.assertEqual(detalle['resumen']['faltantes'], 1)
+        socket.emit_inventario_event.reset_mock()
+        duplicate = self.client.post('/inventarios/bodega_tomas/1/escaneos', json={'valor': '31142001'})
+        self.assertEqual(duplicate.status_code, 409)
+        socket.emit_inventario_event.assert_not_called()
+        self.assertEqual(self.client.delete('/inventarios/bodega_tomas/escaneos/{}'.format(scan_id)).status_code, 200)
+        socket.emit_inventario_event.assert_called_once_with('inventario_updated', {
+            'tipo': 'escaneo_eliminado', 'id_toma': 1, 'id_escaneo': scan_id,
+        })
+        self.assertEqual(self.detalle()['resumen']['faltantes'], 2)
+
+    def test_report_creation_closing_and_reopening_emit_updates(self):
+        with patch.object(routes, '_usuario_actual_desde_token', return_value=None):
+            response = self.client.post('/inventarios/bodega_tomas', json={'nombre': 'Desde movil'})
+        self.assertEqual(response.status_code, 201)
+        report_id = response.get_json()['toma']['id_toma']
+        socket.emit_inventario_event.assert_called_once_with('inventario_updated', {
+            'tipo': 'toma_creada', 'id_toma': report_id,
+        })
+        socket.emit_inventario_event.reset_mock()
+        self.assertEqual(self.client.post('/inventarios/bodega_tomas/{}/cerrar'.format(report_id)).status_code, 200)
+        socket.emit_inventario_event.assert_called_once_with('inventario_updated', {
+            'tipo': 'toma_cerrada', 'id_toma': report_id,
+        })
+        socket.emit_inventario_event.reset_mock()
+        with patch.object(routes, '_usuario_actual_es_admin', return_value=True):
+            response = self.client.post('/inventarios/bodega_tomas/{}/reabrir'.format(report_id))
+        self.assertEqual(response.status_code, 200)
+        socket.emit_inventario_event.assert_called_once_with('inventario_updated', {
+            'tipo': 'toma_reabierta', 'id_toma': report_id,
+        })
+
+    def test_stock_create_and_edit_notify_and_update_existing_report(self):
+        response = self.client.post('/inventarios/bodega_equipos', json={
+            'codigo': '60109', 'numero_serie': '6010900129', 'equipo_nombre': 'Axis P8221',
+        })
+        self.assertEqual(response.status_code, 201)
+        stock_id = response.get_json()['items'][0]['id_bodega_equipo']
+        socket.emit_inventario_event.assert_called_once_with('inventario_updated', {
+            'tipo': 'equipos_creados', 'ids_bodega_equipo': [stock_id],
+        })
+        self.assertEqual(self.detalle()['resumen']['total_esperado'], 3)
+        socket.emit_inventario_event.reset_mock()
+        response = self.client.put('/inventarios/bodega_equipos/{}'.format(stock_id), json={'equipo_nombre': 'Axis actualizado'})
+        self.assertEqual(response.status_code, 200)
+        socket.emit_inventario_event.assert_called_once_with('inventario_updated', {
+            'tipo': 'equipo_actualizado', 'id_bodega_equipo': stock_id,
+        })
+        self.assertIn('Axis actualizado', [item['equipo_nombre'] for item in self.detalle()['resumen']['faltantes_detalle']])
+
+    def test_assignment_and_return_notify_and_refresh_expected_totals(self):
+        db.session.add(models.User(id=5, name='Tecnico prueba', email='test@example.invalid', password_hash='test-only', rol='tecnico'))
+        db.session.commit()
+        with patch.object(routes, '_usuario_actual_desde_token', return_value=None):
+            response = self.client.post('/inventarios/bodega_equipos/1/asignar_tecnico', json={'tecnico_id': 5})
+        self.assertEqual(response.status_code, 200)
+        socket.emit_inventario_event.assert_called_once_with('inventario_updated', {
+            'tipo': 'equipo_asignado', 'id_bodega_equipo': 1,
+        })
+        self.assertEqual(self.detalle()['resumen']['total_esperado'], 1)
+        socket.emit_inventario_event.reset_mock()
+        self.assertEqual(self.client.post('/inventarios/bodega_equipos/1/devolver_bodega', json={}).status_code, 200)
+        socket.emit_inventario_event.assert_called_once_with('inventario_updated', {
+            'tipo': 'equipo_devuelto', 'id_bodega_equipo': 1,
+        })
+        self.assertEqual(self.detalle()['resumen']['total_esperado'], 2)
+
+    def test_failed_transaction_never_announces_an_inventory_change(self):
+        with patch.object(db.session, 'commit', side_effect=RuntimeError('Prueba rollback')):
+            response = self.client.put('/inventarios/bodega_equipos/1', json={'equipo_nombre': 'No guardar'})
+        self.assertEqual(response.status_code, 500)
+        socket.emit_inventario_event.assert_not_called()
+        self.assertEqual(db.session.get(models.BodegaInventarioEquipo, 1).equipo_nombre, 'PC')
+
+    def test_read_only_refresh_does_not_emit_an_update_loop(self):
+        for endpoint in ['/inventarios/bodega_tomas', '/inventarios/bodega_tomas/1',
+                         '/inventarios/bodega_tomas/1?compact=1', '/inventarios/bodega_tipos']:
+            self.assertEqual(self.client.get(endpoint).status_code, 200)
+        socket.emit_inventario_event.assert_not_called()
