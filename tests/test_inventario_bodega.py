@@ -74,10 +74,61 @@ class InventarioBodegaTest(unittest.TestCase):
         db.session.commit()
         self.assertEqual(self.client.delete('/inventarios/bodega_equipos/1').status_code, 200)
         detalle = self.detalle()
-        self.assertEqual(detalle['resumen']['total_escaneos'], 1)
-        self.assertEqual(detalle['escaneos'][0]['numero_serie'], '31142001')
-        self.assertIsNone(detalle['escaneos'][0]['bodega_equipo_id'])
+        self.assertEqual(detalle['resumen']['total_escaneos'], 0)
+        self.assertEqual(detalle['escaneos'], [])
+        historial = models.BodegaInventarioEscaneo.query.one()
+        self.assertEqual(historial.numero_serie, '31142001')
+        self.assertIsNone(historial.bodega_equipo_id)
         self.assertNotIn('31142001', [item['numero_serie'] for item in detalle['resumen']['faltantes_detalle']])
+
+    def test_existing_deleted_scans_are_hidden_in_list_detail_compact_and_closed_reports(self):
+        self.toma.estado = 'cerrado'
+        for resultado in ['encontrado', 'duplicado', 'no_corresponde']:
+            db.session.add(models.BodegaInventarioEscaneo(toma_id=1, codigo='60109',
+                numero_serie='eliminado-' + resultado, equipo_nombre='PC', resultado=resultado))
+        db.session.add(models.BodegaInventarioEscaneo(toma_id=1, bodega_equipo=self.otro,
+            codigo=self.otro.codigo, numero_serie=self.otro.numero_serie, equipo_nombre='PC', resultado='encontrado'))
+        db.session.commit()
+        for params in [{}, {'compact': '1'}, {'tipo_equipo': 'PC'}, {'tipo_equipo': 'PC', 'compact': '1'}]:
+            detalle = self.detalle(**params)
+            self.assertEqual(detalle['resumen']['total_escaneos'], 1)
+            self.assertEqual(detalle['resumen']['encontrados'], 1)
+            self.assertEqual(detalle['resumen']['faltantes'], 1)
+            self.assertEqual([item['numero_serie'] for item in detalle['escaneos']], ['31142002'])
+        listado = self.client.get('/inventarios/bodega_tomas').get_json()
+        self.assertEqual(listado[0]['resumen']['total_escaneos'], 1)
+        self.assertEqual(models.BodegaInventarioEscaneo.query.count(), 4)
+
+    def test_manual_and_unexpected_scans_without_stock_links_are_preserved(self):
+        for resultado in ['manual', 'no_esperado']:
+            db.session.add(models.BodegaInventarioEscaneo(toma_id=1, numero_serie=resultado,
+                equipo_nombre='PC', resultado=resultado))
+        db.session.commit()
+        detalle = self.detalle(tipo_equipo='PC')
+        self.assertEqual(detalle['resumen']['total_escaneos'], 2)
+        self.assertEqual(detalle['resumen']['manuales'], 1)
+        self.assertEqual(detalle['resumen']['no_esperados'], 1)
+        self.assertEqual({item['resultado'] for item in detalle['escaneos']}, {'manual', 'no_esperado'})
+
+    def test_readding_same_series_does_not_restore_or_block_deleted_scan(self):
+        db.session.add(models.BodegaInventarioEscaneo(toma_id=1, bodega_equipo=self.equipo,
+            codigo=self.equipo.codigo, numero_serie=self.equipo.numero_serie, equipo_nombre='PC', resultado='encontrado'))
+        db.session.commit()
+        self.assertEqual(self.client.delete('/inventarios/bodega_equipos/1').status_code, 200)
+        db.session.add(models.BodegaInventarioEquipo(id_bodega_equipo=3, codigo='31142',
+            numero_serie='31142001', equipo_nombre='PC'))
+        db.session.commit()
+        self.assertEqual(self.detalle()['escaneos'], [])
+        with patch.object(routes, '_usuario_actual_desde_token', return_value=None):
+            response = self.client.post('/inventarios/bodega_tomas/1/escaneos', json={
+                'valor': '31142001', 'tipo_equipo': 'PC',
+            })
+        self.assertEqual(response.status_code, 201, response.get_json())
+        detalle = self.detalle()
+        self.assertEqual(detalle['resumen']['total_escaneos'], 1)
+        self.assertEqual(detalle['resumen']['encontrados'], 1)
+        self.assertEqual(detalle['escaneos'][0]['bodega_equipo_id'], 3)
+        self.assertEqual(models.BodegaInventarioEscaneo.query.count(), 2)
 
     def test_shared_product_code_does_not_remove_other_equipment_series(self):
         self.client.delete('/inventarios/bodega_equipos/1')

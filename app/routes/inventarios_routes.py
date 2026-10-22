@@ -246,13 +246,20 @@ def _escaneo_pertenece_tipo(item, tipo_equipo):
     )
 
 
+def _escaneos_vigentes_bodega(toma, tipo_equipo=None):
+    # Al eliminar stock, SET NULL conserva su historial, no su presencia en el informe.
+    # Los registros manuales o no esperados pueden no haber tenido equipo asociado.
+    return [
+        item for item in list(toma.escaneos or [])
+        if _escaneo_pertenece_tipo(item, tipo_equipo)
+        and (item.bodega_equipo_id is not None or item.resultado in {"manual", "no_esperado"})
+    ]
+
+
 def _resumen_bodega_toma(toma: BodegaInventarioToma, include_detalle=False, tipo_equipo=None):
     esperados = _equipos_esperados_bodega(tipo_equipo=tipo_equipo)
     esperados_ids = {item.id_bodega_equipo for item in esperados}
-    escaneos = [
-        item for item in list(toma.escaneos or [])
-        if _escaneo_pertenece_tipo(item, tipo_equipo)
-    ]
+    escaneos = _escaneos_vigentes_bodega(toma, tipo_equipo)
     encontrados_ids = {
         item.bodega_equipo_id for item in escaneos
         if item.bodega_equipo_id and item.bodega_equipo_id in esperados_ids and item.resultado in {"encontrado", "duplicado"}
@@ -305,10 +312,7 @@ def _serialize_bodega_toma(
         "resumen": _resumen_bodega_toma(item, include_detalle=include_detalle, tipo_equipo=tipo_equipo),
     }
     if include_detalle or include_escaneos:
-        escaneos = [
-            escaneo for escaneo in list(item.escaneos or [])
-            if _escaneo_pertenece_tipo(escaneo, tipo_equipo)
-        ]
+        escaneos = _escaneos_vigentes_bodega(item, tipo_equipo)
         data["escaneos"] = [
             _serialize_bodega_toma_escaneo(escaneo)
             for escaneo in sorted(escaneos, key=lambda x: x.created_at or datetime.min, reverse=True)
@@ -491,6 +495,10 @@ def registrar_bodega_toma_escaneo(id_toma):
         revision_area = _area_revision_activa_bodega(equipo.id_bodega_equipo)
         ya_escaneado = BodegaInventarioEscaneo.query.filter(
             BodegaInventarioEscaneo.toma_id == toma.id_toma,
+            or_(
+                BodegaInventarioEscaneo.bodega_equipo_id.isnot(None),
+                BodegaInventarioEscaneo.resultado.in_(["manual", "no_esperado"]),
+            ),
             or_(
                 BodegaInventarioEscaneo.bodega_equipo_id == equipo.id_bodega_equipo,
                 db.func.lower(BodegaInventarioEscaneo.numero_serie) == str(numero_serie or "").lower(),
