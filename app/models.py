@@ -501,6 +501,7 @@ class Soporte(db.Model):
     tipo = db.Column(db.String(10), nullable=False)  # 'terreno' o 'remoto'
     fecha_soporte = db.Column(db.Date, nullable=False)
     solucion = db.Column(db.Text, nullable=True)
+    sugerencia = db.Column(db.Text, nullable=True)
     categoria_falla = db.Column(db.String(50), nullable=True)
     subcategoria_falla = db.Column(db.String(80), nullable=True)
     permiso_trabajo = db.Column(db.Boolean, default=False)
@@ -610,6 +611,22 @@ class Ismael(db.Model):
     accion_pendiente = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class SoporteAvisoTerreno(db.Model):
+    __tablename__ = 'soporte_avisos_terreno'
+    id_aviso = db.Column(db.Integer, primary_key=True)
+    soporte_id = db.Column(db.Integer, db.ForeignKey('soporte.id_soporte', ondelete='CASCADE'), nullable=False, index=True)
+    clave = db.Column(db.String(64), nullable=False, unique=True)
+    contenido = db.Column(db.Text, nullable=False)
+    destinatarios = db.Column(db.Text, nullable=False)
+    mensaje_id = db.Column(db.String(200), nullable=False)
+    estado = db.Column(db.String(20), nullable=False, default='pendiente')
+    error = db.Column(db.Text, nullable=True)
+    enviado_por = db.Column(db.String(120), nullable=False)
+    fecha_intento = db.Column(db.DateTime(timezone=True), nullable=True)
+    fecha_envio = db.Column(db.DateTime(timezone=True), nullable=True)
+    soporte = db.relationship('Soporte', backref=db.backref('avisos_terreno', cascade='all, delete-orphan'))
 
 
 class SoporteCaseTomado(db.Model):

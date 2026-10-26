@@ -5,6 +5,8 @@ from sqlalchemy import text
 from .config import Config
 from .database import db
 from .ticket_iso_schema import ensure_ticket_iso_schema
+from .soporte_schema import ensure_soporte_schema
+from .smtp_config import configurar_smtp_desde_archivo
 from flask import send_from_directory
 from .socketio_ext import socketio
 
@@ -79,6 +81,7 @@ def create_app():
 # Crear carpetas antes de iniciar la app
     app = Flask(__name__)
     app.config.from_object(Config)
+    configurar_smtp_desde_archivo(app)
 
      # Habilitar CORS específicamente para las rutas que empiezan con /api
     CORS(app, resources={r"/api/*": {"origins": "*"}})
@@ -143,6 +146,7 @@ def create_app():
 
     with app.app_context():
         db.create_all()
+        ensure_soporte_schema(db.engine)
         columnas_ticket_iso = ensure_ticket_iso_schema(db.engine)
         if columnas_ticket_iso:
             print('[schema] Ticket ISO actualizado: ' + ', '.join(columnas_ticket_iso))

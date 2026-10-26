@@ -5,9 +5,10 @@ from flask import Blueprint, request, jsonify
 import jwt
 from sqlalchemy import or_, text
 
-from ..models import Soporte, Centro, Cliente, Ismael, SoporteCaseTomado, User
+from ..models import Soporte, Centro, Cliente, Ismael, SoporteCaseTomado, SoporteAvisoTerreno, User
 from ..database import db
 from ..socketio_ext import emit_soporte_event
+from ..soporte_correo import AvisoCorreoError, elegible_aviso, notificar_terreno, serializar_aviso
 from .auth_routes import SECRET_KEY
 
 soporte_blueprint = Blueprint('soporte', __name__)
@@ -100,6 +101,9 @@ def crear_soporte():
     if not usuario:
         return jsonify({"error": "Sesion invalida o expirada. Inicia sesion para crear el soporte."}), 401
     data = request.json
+    sugerencia = data.get('sugerencia')
+    if sugerencia is not None and (not isinstance(sugerencia, str) or len(sugerencia) > 10000):
+        return jsonify({'error': 'La sugerencia debe ser texto de hasta 10000 caracteres.'}), 400
     origen = str(data.get('origen', 'cliente')).lower().strip()
     if origen not in ('cliente', 'orca', 'terceros'):
         return jsonify({"error": "Origen invalido. Use 'cliente', 'orca' o 'terceros'."}), 400
@@ -128,6 +132,7 @@ def crear_soporte():
         tipo=tipo,
         fecha_soporte=_parse_date(data.get('fecha_soporte')),
         solucion=data.get('solucion'),
+        sugerencia=sugerencia.strip() or None if sugerencia else None,
         categoria_falla=data.get('categoria_falla'),
         subcategoria_falla=data.get('subcategoria_falla'),
         permiso_trabajo=bool(data.get('permiso_trabajo', False)),
@@ -166,6 +171,9 @@ def obtener_soportes():
     usuario = _usuario_autenticado()
     mostrar_creador = bool(usuario and str(usuario.rol or '').strip().lower() == 'admin')
     soportes = Soporte.query.all()
+    avisos = {}
+    for aviso in SoporteAvisoTerreno.query.order_by(SoporteAvisoTerreno.id_aviso).all():
+        avisos[aviso.soporte_id] = serializar_aviso(aviso)
     resultado = []
     for soporte in soportes:
         resultado.append({
@@ -181,6 +189,8 @@ def obtener_soportes():
             "tipo": soporte.tipo,
             "fecha_soporte": _iso_value(soporte.fecha_soporte),
             "solucion": soporte.solucion,
+            "sugerencia": soporte.sugerencia,
+            "aviso_terreno": avisos.get(soporte.id_soporte),
             "categoria_falla": soporte.categoria_falla,
             "subcategoria_falla": soporte.subcategoria_falla,
             "permiso_trabajo": bool(soporte.permiso_trabajo),
@@ -505,7 +515,12 @@ def eliminar_caso_externo(origen, case_id):
 # Actualizar un registro de soporte
 @soporte_blueprint.route('/<int:id_soporte>', methods=['PUT'])
 def actualizar_soporte(id_soporte):
+    if not _usuario_autenticado():
+        return jsonify({'error': 'Sesion invalida o expirada.'}), 401
     data = request.json
+    sugerencia = data.get('sugerencia')
+    if sugerencia is not None and (not isinstance(sugerencia, str) or len(sugerencia) > 10000):
+        return jsonify({'error': 'La sugerencia debe ser texto de hasta 10000 caracteres.'}), 400
     soporte = Soporte.query.get_or_404(id_soporte)
     estado_anterior = str(soporte.estado or '').lower()
 
@@ -519,6 +534,8 @@ def actualizar_soporte(id_soporte):
     if 'fecha_soporte' in data:
         soporte.fecha_soporte = _parse_date(data.get('fecha_soporte'))
     soporte.solucion = data.get('solucion', soporte.solucion)
+    if 'sugerencia' in data:
+        soporte.sugerencia = sugerencia.strip() or None if sugerencia else None
     soporte.categoria_falla = data.get('categoria_falla', soporte.categoria_falla)
     soporte.subcategoria_falla = data.get('subcategoria_falla', soporte.subcategoria_falla)
     if 'permiso_trabajo' in data:
@@ -570,7 +587,31 @@ def actualizar_soporte(id_soporte):
         "created_at": _iso_value(_get_datetime_attr(soporte, "created_at")),
         "updated_at": _iso_value(_get_datetime_attr(soporte, "updated_at")),
     })
-    return jsonify({"message": "Soporte actualizado exitosamente"}), 200
+    return jsonify({"message": "Soporte actualizado exitosamente", "id_soporte": soporte.id_soporte}), 200
+
+
+@soporte_blueprint.route('/<int:id_soporte>/aviso-terreno', methods=['POST'])
+def enviar_aviso_terreno(id_soporte):
+    usuario = _usuario_autenticado()
+    if not usuario:
+        return jsonify({'error': 'Sesion invalida o expirada.'}), 401
+    soporte = Soporte.query.get_or_404(id_soporte)
+    if not elegible_aviso(soporte):
+        return jsonify({'error': 'El aviso es solo para soportes de terreno pendientes o en seguimiento, sin fecha de cierre.'}), 409
+    if not str(soporte.problema or '').strip() or not str(soporte.sugerencia or '').strip():
+        return jsonify({'error': 'Completa el problema y la sugerencia antes de enviar el aviso.'}), 400
+    try:
+        aviso, status = notificar_terreno(soporte, usuario)
+    except AvisoCorreoError as exc:
+        return jsonify({'error': str(exc), 'soporte_guardado': True, 'reintentable': True}), 503
+    except Exception:
+        db.session.rollback()
+        from flask import current_app
+        current_app.logger.exception('Error registrando aviso de terreno #%s', id_soporte)
+        return jsonify({'error': 'No se pudo confirmar el aviso. Verifica el buzon antes de reenviar.',
+                        'soporte_guardado': True, 'reintentable': False}), 503
+    emit_soporte_event('soporte_updated', {'action': 'aviso_terreno', 'id_soporte': id_soporte})
+    return jsonify({'aviso_terreno': aviso, 'soporte_guardado': True}), status
 
 
 @soporte_blueprint.route('/<int:id_soporte>/correo-enviado', methods=['PATCH'])
