@@ -45,17 +45,74 @@ class TicketISOSchemaTest(unittest.TestCase):
         schema.ensure_ticket_iso_schema(self.engine)
         self.assertEqual(schema.ensure_ticket_iso_schema(self.engine), [])
 
+    def test_adds_root_metadata_without_changing_existing_root_cause(self):
+        self.crear_tabla_anterior()
+        nuevas = {'responsable_causa_raiz', 'fecha_causa_raiz'}
+        with self.engine.begin() as connection:
+            for nombre, tipo in schema.COLUMNAS_TICKET_ISO:
+                if nombre not in nuevas:
+                    connection.execute(text(f'ALTER TABLE tickets_iso ADD COLUMN {nombre} {tipo}'))
+            connection.execute(text("UPDATE tickets_iso SET causa_raiz = 'Causa anterior', responsable_accion_inmediata = 'Persona accion'"))
+        self.assertEqual(set(schema.ensure_ticket_iso_schema(self.engine)), nuevas)
+        self.assertEqual(schema.ensure_ticket_iso_schema(self.engine), [])
+        with self.engine.connect() as connection:
+            row = connection.execute(text('SELECT causa_raiz, responsable_accion_inmediata, responsable_causa_raiz, fecha_causa_raiz FROM tickets_iso')).one()
+            self.assertEqual(tuple(row), ('Causa anterior', 'Persona accion', None, None))
+
+    def test_new_followup_columns_are_nullable_and_keep_saved_answers_on_restart(self):
+        self.crear_tabla_anterior()
+        schema.ensure_ticket_iso_schema(self.engine)
+        columnas = {column['name']: column for column in inspect(self.engine).get_columns('tickets_iso')}
+        for campo in ('accion_inmediata', 'amerita_seguimiento', 'seguimiento_preguntas', 'causa_raiz'):
+            self.assertTrue(columnas[campo]['nullable'])
+        with self.engine.begin() as connection:
+            anterior = connection.execute(text('SELECT accion_inmediata, amerita_seguimiento, seguimiento_preguntas FROM tickets_iso')).one()
+            self.assertEqual(tuple(anterior), (None, None, None))
+            connection.execute(text('UPDATE tickets_iso SET accion_inmediata = :accion, amerita_seguimiento = TRUE, seguimiento_preguntas = :preguntas'),
+                               {'accion': 'Medida inicial', 'preguntas': '[{"pregunta":"Causa?","respuesta":"En revision"}]'})
+        self.assertEqual(schema.ensure_ticket_iso_schema(self.engine), [])
+        with self.engine.connect() as connection:
+            saved = connection.execute(text('SELECT accion_inmediata, amerita_seguimiento, seguimiento_preguntas FROM tickets_iso')).one()
+            self.assertEqual(tuple(saved), ('Medida inicial', 1, '[{"pregunta":"Causa?","respuesta":"En revision"}]'))
+
+    def test_adds_root_cause_without_relabeling_or_moving_existing_results(self):
+        self.crear_tabla_anterior()
+        with self.engine.begin() as connection:
+            for nombre, tipo in schema.COLUMNAS_TICKET_ISO:
+                if nombre != 'causa_raiz':
+                    connection.execute(text(f'ALTER TABLE tickets_iso ADD COLUMN {nombre} {tipo}'))
+            connection.execute(text("UPDATE tickets_iso SET observaciones = 'Resultados historicos'"))
+        self.assertEqual(schema.ensure_ticket_iso_schema(self.engine), ['causa_raiz'])
+        self.assertEqual(schema.ensure_ticket_iso_schema(self.engine), [])
+        with self.engine.connect() as connection:
+            row = connection.execute(text('SELECT observaciones, causa_raiz FROM tickets_iso')).one()
+            self.assertEqual(tuple(row), ('Resultados historicos', None))
+
     def test_agrega_plan_a_esquema_previo_y_conserva_datos(self):
         self.crear_tabla_anterior()
         with self.engine.begin() as connection:
             for nombre, tipo in schema.COLUMNAS_TICKET_ISO[:4]:
                 connection.execute(text(f'ALTER TABLE tickets_iso ADD COLUMN {nombre} {tipo}'))
             connection.execute(text("UPDATE tickets_iso SET observaciones = 'Notas existentes'"))
-        self.assertEqual(schema.ensure_ticket_iso_schema(self.engine), ['resultado_plan_accion', 'fecha_control'])
+        self.assertEqual(schema.ensure_ticket_iso_schema(self.engine), [nombre for nombre, _tipo in schema.COLUMNAS_TICKET_ISO[4:]])
         with self.engine.connect() as connection:
             registro = connection.execute(text('SELECT observaciones, resultado_plan_accion, fecha_control FROM tickets_iso')).one()
         self.assertEqual(tuple(registro), ('Notas existentes', None, None))
         self.assertEqual(schema.ensure_ticket_iso_schema(self.engine), [])
+
+    def test_adds_description_date_and_separate_action_metadata_without_backfilling(self):
+        self.crear_tabla_anterior()
+        nuevas = {'fecha_registro_descripcion', 'responsable_accion_inmediata', 'fecha_accion_inmediata'}
+        with self.engine.begin() as connection:
+            for nombre, tipo in schema.COLUMNAS_TICKET_ISO:
+                if nombre not in nuevas:
+                    connection.execute(text(f'ALTER TABLE tickets_iso ADD COLUMN {nombre} {tipo}'))
+            connection.execute(text("UPDATE tickets_iso SET accion_inmediata = 'Medida anterior', observaciones = 'Resultados anteriores'"))
+        self.assertEqual(set(schema.ensure_ticket_iso_schema(self.engine)), nuevas)
+        self.assertEqual(schema.ensure_ticket_iso_schema(self.engine), [])
+        with self.engine.connect() as connection:
+            row = connection.execute(text('SELECT accion_inmediata, observaciones, fecha_registro_descripcion, responsable_accion_inmediata, fecha_accion_inmediata FROM tickets_iso')).one()
+            self.assertEqual(tuple(row), ('Medida anterior', 'Resultados anteriores', None, None, None))
 
     def test_otro_rollback_no_deshace_las_columnas_confirmadas(self):
         self.crear_tabla_anterior()

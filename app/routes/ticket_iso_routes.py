@@ -3,7 +3,7 @@ import re
 
 import jwt
 import pytz
-from flask import Blueprint, g, jsonify, request
+from flask import Blueprint, g, jsonify, request, send_file
 from sqlalchemy.exc import IntegrityError
 
 from ..database import db
@@ -80,6 +80,15 @@ def _serializar(ticket):
         'area': ticket.area,
         'equipo_afectado': ticket.equipo_afectado,
         'problema': ticket.problema,
+        'accion_inmediata': ticket.accion_inmediata,
+        'amerita_seguimiento': ticket.amerita_seguimiento,
+        'seguimiento_preguntas': ticket.seguimiento_preguntas or [],
+        'causa_raiz': ticket.causa_raiz,
+        'responsable_causa_raiz': ticket.responsable_causa_raiz,
+        'fecha_causa_raiz': ticket.fecha_causa_raiz.isoformat() if ticket.fecha_causa_raiz else None,
+        'fecha_registro_descripcion': ticket.fecha_registro_descripcion.isoformat() if ticket.fecha_registro_descripcion else None,
+        'responsable_accion_inmediata': ticket.responsable_accion_inmediata,
+        'fecha_accion_inmediata': ticket.fecha_accion_inmediata.isoformat() if ticket.fecha_accion_inmediata else None,
         'responsable_id': ticket.responsable_id,
         'responsable': ticket.responsable_nombre,
         'prioridad': ticket.prioridad,
@@ -115,6 +124,36 @@ def _fecha_dia(valor, mensaje):
         return CHILE.localize(datetime.combine(dia, time(12))).astimezone(timezone.utc)
     except (TypeError, ValueError, OverflowError):
         raise ValueError(mensaje)
+
+
+def _fecha_opcional_ticket(data, campo, mensaje, ticket):
+    if campo not in data:
+        return getattr(ticket, campo, None)
+    valor = data[campo]
+    return None if valor in (None, '') else _fecha_dia(valor, mensaje).astimezone(CHILE).date()
+
+
+def _validar_seguimiento(data, ticket):
+    amerita = data.get('amerita_seguimiento', ticket.amerita_seguimiento if ticket else None)
+    if amerita is not None and not isinstance(amerita, bool):
+        raise ValueError('Selecciona Si, No o deja el seguimiento sin seleccionar.')
+    if amerita is not True:
+        return amerita, None
+    preguntas = data.get('seguimiento_preguntas', ticket.seguimiento_preguntas if ticket else None)
+    if preguntas is None:
+        preguntas = [{'pregunta': '', 'respuesta': ''} for _ in range(5)]
+    if not isinstance(preguntas, list) or len(preguntas) != 5:
+        raise ValueError('El seguimiento debe contener cinco preguntas y sus respuestas.')
+    resultado = []
+    for indice, item in enumerate(preguntas, start=1):
+        if not isinstance(item, dict):
+            raise ValueError(f'La pregunta {indice} del seguimiento no es valida.')
+        pregunta = _texto(item, 'pregunta', 500) or ''
+        respuesta = _texto(item, 'respuesta', 4000) or ''
+        if respuesta and not pregunta:
+            raise ValueError(f'Escribe la pregunta {indice} antes de completar su respuesta.')
+        resultado.append({'pregunta': pregunta, 'respuesta': respuesta})
+    return amerita, resultado
 
 
 def _validar(data, ticket=None):
@@ -166,6 +205,12 @@ def _validar(data, ticket=None):
         cierre = ticket.fecha_cierre
     if cierre and datetime.fromisoformat(_iso(cierre)).astimezone(CHILE).date() < recepcion.astimezone(CHILE).date():
         raise ValueError('El cierre no puede ser anterior a la recepcion del ticket.')
+    amerita, preguntas = _validar_seguimiento(data, ticket)
+    causa_raiz, responsable_causa, fecha_causa = None, None, None
+    if amerita is True:
+        causa_raiz = _texto(data, 'causa_raiz', 10000) if 'causa_raiz' in data else (ticket.causa_raiz if ticket else None)
+        responsable_causa = _texto(data, 'responsable_causa_raiz', 100) if 'responsable_causa_raiz' in data else (ticket.responsable_causa_raiz if ticket else None)
+        fecha_causa = _fecha_opcional_ticket(data, 'fecha_causa_raiz', 'Indica una fecha de causa raiz valida.', ticket)
     return {
         'numero_ticket': numero or (ticket.numero_ticket if ticket else None),
         'fecha_recepcion': recepcion,
@@ -176,6 +221,15 @@ def _validar(data, ticket=None):
         'responsable_id': responsable_id,
         'responsable_nombre': responsable_nombre,
         'problema': _texto(data, 'problema', 10000, obligatorio=True),
+        'accion_inmediata': _texto(data, 'accion_inmediata', 10000) if 'accion_inmediata' in data else (ticket.accion_inmediata if ticket else None),
+        'amerita_seguimiento': amerita,
+        'seguimiento_preguntas': preguntas,
+        'causa_raiz': causa_raiz,
+        'responsable_causa_raiz': responsable_causa,
+        'fecha_causa_raiz': fecha_causa,
+        'fecha_registro_descripcion': _fecha_opcional_ticket(data, 'fecha_registro_descripcion', 'Indica una fecha de registro valida.', ticket),
+        'responsable_accion_inmediata': _texto(data, 'responsable_accion_inmediata', 100) if 'responsable_accion_inmediata' in data else (ticket.responsable_accion_inmediata if ticket else None),
+        'fecha_accion_inmediata': _fecha_opcional_ticket(data, 'fecha_accion_inmediata', 'Indica una fecha de accion valida.', ticket),
         'estado': estado,
         'fecha_cierre': cierre,
     }
@@ -235,6 +289,21 @@ def detalle_ticket(ticket_id):
     if not ticket:
         return jsonify({'error': 'El ticket ya no existe.'}), 404
     return jsonify({'ticket': _serializar(ticket)}), 200
+
+
+@ticket_iso_blueprint.route('/<int:ticket_id>/pdf', methods=['GET'])
+def pdf_ticket(ticket_id):
+    from ..ticket_iso_pdf import generar_ticket_iso_pdf
+
+    ticket = db.session.get(TicketISO, ticket_id)
+    if not ticket:
+        return jsonify({'error': 'El ticket ya no existe.'}), 404
+    archivo = generar_ticket_iso_pdf(_serializar(ticket), ORIGENES, CATEGORIAS_PROCEDIMIENTO)
+    response = send_file(archivo, mimetype='application/pdf', as_attachment=False,
+                         download_name=f'ticket-iso-{ticket_id}.pdf', max_age=0)
+    response.headers['Cache-Control'] = 'private, no-store'
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    return response
 
 
 def _guardar(ticket=None):

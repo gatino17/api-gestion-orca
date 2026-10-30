@@ -8,6 +8,15 @@ COLUMNAS_TICKET_ISO = (
     ('observaciones', 'TEXT'),
     ('resultado_plan_accion', 'TEXT'),
     ('fecha_control', 'DATE'),
+    ('accion_inmediata', 'TEXT'),
+    ('amerita_seguimiento', 'BOOLEAN'),
+    ('seguimiento_preguntas', 'JSON'),
+    ('causa_raiz', 'TEXT'),
+    ('fecha_registro_descripcion', 'DATE'),
+    ('responsable_accion_inmediata', 'VARCHAR(100)'),
+    ('fecha_accion_inmediata', 'DATE'),
+    ('responsable_causa_raiz', 'VARCHAR(100)'),
+    ('fecha_causa_raiz', 'DATE'),
 )
 
 
