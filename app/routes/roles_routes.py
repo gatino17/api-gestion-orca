@@ -1,12 +1,33 @@
+import jwt
 from flask import Blueprint, jsonify, request
 
 from ..database import db
-from ..models import Role, RolePage
+from ..models import Role, RolePage, User
 from ..permissions import AVAILABLE_PAGES
 from ..socketio_ext import emit_roles_event
+from .auth_routes import SECRET_KEY
 
 
 roles_blueprint = Blueprint("roles", __name__)
+
+
+@roles_blueprint.before_request
+def require_admin_for_role_changes():
+    if request.method in {"GET", "HEAD", "OPTIONS"}:
+        return None
+    authorization = request.headers.get("Authorization", "")
+    if not authorization.startswith("Bearer "):
+        return jsonify({"message": "Sesion invalida o expirada."}), 401
+    try:
+        payload = jwt.decode(authorization[7:], SECRET_KEY, algorithms=["HS256"])
+        user = db.session.get(User, payload.get("user_id"))
+    except jwt.InvalidTokenError:
+        return jsonify({"message": "Sesion invalida o expirada."}), 401
+    if not user:
+        return jsonify({"message": "Sesion invalida o expirada."}), 401
+    if str(user.rol or "").strip().lower() != "admin":
+        return jsonify({"message": "Solo admin puede modificar los permisos de los roles."}), 403
+    return None
 
 
 def _serialize_role(role):

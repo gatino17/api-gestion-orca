@@ -2,14 +2,16 @@ import json
 import os
 import re
 import shutil
+from functools import wraps
 from uuid import uuid4
 
 import jwt
-from flask import Blueprint, current_app, jsonify, request
+from flask import Blueprint, current_app, g, jsonify, request
 from werkzeug.utils import secure_filename
 
 from ..database import db
 from ..models import Centro, Cliente, DiagramaPlantilla, EquiposIP, User
+from ..permissions import get_pages_for_role_name
 from .auth_routes import SECRET_KEY
 
 
@@ -34,9 +36,17 @@ def _usuario_actual():
         return None
 
 
-def _admin_actual():
-    usuario = _usuario_actual()
-    return usuario if usuario and str(usuario.rol or '').strip().lower() == 'admin' else None
+def _requiere_configuraciones(view):
+    @wraps(view)
+    def autorizado(*args, **kwargs):
+        usuario = _usuario_actual()
+        if not usuario:
+            return jsonify({'error': 'Sesion invalida o expirada.'}), 401
+        if 'configuraciones' not in get_pages_for_role_name(usuario.rol):
+            return jsonify({'error': 'No tienes permiso para administrar Configuraciones.'}), 403
+        g.usuario_configuraciones = usuario
+        return view(*args, **kwargs)
+    return autorizado
 
 
 def _ruta_imagen_relativa(nombre_archivo):
@@ -333,9 +343,8 @@ def _normalizar_diagrama_logico(payload):
 
 
 @diagramas_blueprint.route('/plantillas', methods=['GET'])
+@_requiere_configuraciones
 def listar_plantillas():
-    if not _admin_actual():
-        return jsonify({'error': 'Acceso exclusivo para administradores.'}), 403
     plantillas = DiagramaPlantilla.query.order_by(
         DiagramaPlantilla.estado.asc(),
         DiagramaPlantilla.updated_at.desc(),
@@ -400,10 +409,9 @@ def resolver_plantilla():
 
 
 @diagramas_blueprint.route('/plantillas', methods=['POST'])
+@_requiere_configuraciones
 def crear_plantilla():
-    usuario = _admin_actual()
-    if not usuario:
-        return jsonify({'error': 'Acceso exclusivo para administradores.'}), 403
+    usuario = g.usuario_configuraciones
 
     data = request.form
     nombre = str(data.get('nombre') or '').strip()
@@ -441,10 +449,9 @@ def crear_plantilla():
 
 
 @diagramas_blueprint.route('/plantillas/<int:plantilla_id>/duplicar', methods=['POST'])
+@_requiere_configuraciones
 def duplicar_plantilla(plantilla_id):
-    usuario = _admin_actual()
-    if not usuario:
-        return jsonify({'error': 'Acceso exclusivo para administradores.'}), 403
+    usuario = g.usuario_configuraciones
     origen = db.session.get(DiagramaPlantilla, plantilla_id)
     if not origen:
         return jsonify({'error': 'La plantilla de origen no existe.'}), 404
@@ -491,9 +498,8 @@ def duplicar_plantilla(plantilla_id):
 
 
 @diagramas_blueprint.route('/plantillas/<int:plantilla_id>', methods=['PUT'])
+@_requiere_configuraciones
 def actualizar_plantilla(plantilla_id):
-    if not _admin_actual():
-        return jsonify({'error': 'Acceso exclusivo para administradores.'}), 403
     plantilla = db.session.get(DiagramaPlantilla, plantilla_id)
     if not plantilla:
         return jsonify({'error': 'Plantilla no encontrada.'}), 404
@@ -532,9 +538,8 @@ def actualizar_plantilla(plantilla_id):
 
 
 @diagramas_blueprint.route('/plantillas/<int:plantilla_id>', methods=['DELETE'])
+@_requiere_configuraciones
 def eliminar_plantilla(plantilla_id):
-    if not _admin_actual():
-        return jsonify({'error': 'Acceso exclusivo para administradores.'}), 403
     plantilla = db.session.get(DiagramaPlantilla, plantilla_id)
     if not plantilla:
         return jsonify({'error': 'Plantilla no encontrada.'}), 404
@@ -550,9 +555,8 @@ def eliminar_plantilla(plantilla_id):
 
 
 @diagramas_blueprint.route('/plantillas/<int:plantilla_id>/contenido', methods=['PUT'])
+@_requiere_configuraciones
 def guardar_contenido_plantilla(plantilla_id):
-    if not _admin_actual():
-        return jsonify({'error': 'Acceso exclusivo para administradores.'}), 403
     plantilla = db.session.get(DiagramaPlantilla, plantilla_id)
     if not plantilla:
         return jsonify({'error': 'Plantilla no encontrada.'}), 404

@@ -24,6 +24,7 @@ AVAILABLE_PAGES = [
     {"key": "registrosdocumentos", "label": "Registro de actas", "route": "/registrosdocumentos"},
     {"key": "usuarios", "label": "Usuarios", "route": "/usuarios"},
     {"key": "tecnicos", "label": "Tecnicos", "route": "/tecnicos"},
+    {"key": "configuraciones", "label": "Configuraciones", "route": "/configuraciones"},
 ]
 
 
