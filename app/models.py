@@ -505,6 +505,7 @@ class Soporte(db.Model):
     categoria_falla = db.Column(db.String(50), nullable=True)
     subcategoria_falla = db.Column(db.String(80), nullable=True)
     permiso_trabajo = db.Column(db.Boolean, default=False)
+    responsabilidad_falla = db.Column(db.String(20), nullable=False, default='por_determinar', server_default='por_determinar')
     cambio_equipo = db.Column(db.Boolean, default=False)
     equipo_cambiado = db.Column(db.String(100), nullable=True)
     origen = db.Column(db.String(20), nullable=False, default='cliente')  # 'cliente' | 'orca'

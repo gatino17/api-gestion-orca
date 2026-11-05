@@ -14,7 +14,13 @@ def ensure_soporte_schema(engine):
         inspector = inspect(connection)
         if not inspector.has_table('soporte'):
             raise RuntimeError('No existe la tabla soporte.')
-        if 'sugerencia' not in {column['name'] for column in inspector.get_columns('soporte')}:
-            condition = 'IF NOT EXISTS ' if postgres else ''
-            connection.execute(text(f'ALTER TABLE soporte ADD COLUMN {condition}sugerencia TEXT'))
+        columns = {column['name'] for column in inspector.get_columns('soporte')}
+        additions = {
+            'sugerencia': 'TEXT',
+            'responsabilidad_falla': "VARCHAR(20) NOT NULL DEFAULT 'por_determinar'",
+        }
+        for name, definition in additions.items():
+            if name not in columns:
+                condition = 'IF NOT EXISTS ' if postgres else ''
+                connection.execute(text(f'ALTER TABLE soporte ADD COLUMN {condition}{name} {definition}'))
         SoporteAvisoTerreno.__table__.create(connection, checkfirst=True)

@@ -91,6 +91,53 @@ class SoporteAvisoTest(unittest.TestCase):
         self.assertEqual(self.client.put(f'/api/soporte/{id_soporte}', json={'sugerencia': 'Cambiar'}).status_code, 401)
         self.send.assert_not_called()
 
+    def test_responsibility_defaults_to_unknown_independently_of_report_origin(self):
+        for origin in ['cliente', 'orca', 'terceros']:
+            soporte_id = self.create(origen=origin)
+            row = db.session.get(models.Soporte, soporte_id)
+            self.assertEqual(row.responsabilidad_falla, 'por_determinar')
+            self.assertEqual(row.origen, origin)
+        rows = self.client.get('/api/soporte/', headers=self.headers).get_json()
+        self.assertTrue(all(row['responsabilidad_falla'] == 'por_determinar' for row in rows))
+
+    def test_responsibility_is_persisted_listed_and_editable_without_changing_origin(self):
+        soporte_id = self.create(origen='orca', responsabilidad_falla=' Cliente ', permiso_trabajo=True)
+        for value in ['cliente', 'orca', 'terceros', 'por_determinar']:
+            response = self.client.put(f'/api/soporte/{soporte_id}', json={'responsabilidad_falla': value}, headers=self.headers)
+            self.assertEqual(response.status_code, 200)
+            row = self.client.get('/api/soporte/', headers=self.headers).get_json()[0]
+            self.assertEqual(row['responsabilidad_falla'], value)
+            self.assertEqual(row['origen'], 'orca')
+            self.assertTrue(row['permiso_trabajo'])
+        self.send.assert_not_called()
+
+    def test_legacy_partial_updates_keep_existing_responsibility(self):
+        soporte_id = self.create(responsabilidad_falla='terceros')
+        response = self.client.put(f'/api/soporte/{soporte_id}', json={'prioridad': 'baja'}, headers=self.headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(db.session.get(models.Soporte, soporte_id).responsabilidad_falla, 'terceros')
+
+    def test_empty_responsibility_is_unknown_and_invalid_values_do_not_modify_support(self):
+        for value in [None, '', '  ']:
+            soporte_id = self.create(responsabilidad_falla=value)
+            self.assertEqual(db.session.get(models.Soporte, soporte_id).responsabilidad_falla, 'por_determinar')
+            self.client.put(f'/api/soporte/{soporte_id}', json={'responsabilidad_falla': 'orca'}, headers=self.headers)
+            response = self.client.put(f'/api/soporte/{soporte_id}', json={'responsabilidad_falla': value}, headers=self.headers)
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(db.session.get(models.Soporte, soporte_id).responsabilidad_falla, 'por_determinar')
+        soporte_id = self.create(responsabilidad_falla='cliente')
+        count = models.Soporte.query.count()
+        for value in ['tecnico', 'otro', True, 123, [], {}]:
+            payload = {**self.payload, 'responsabilidad_falla': value}
+            response = self.client.post('/api/soporte/', json=payload, headers=self.headers)
+            self.assertEqual(response.status_code, 400)
+            response = self.client.put(f'/api/soporte/{soporte_id}', json={'problema': 'No guardar', 'responsabilidad_falla': value}, headers=self.headers)
+            self.assertEqual(response.status_code, 400)
+        self.assertEqual(models.Soporte.query.count(), count)
+        row = db.session.get(models.Soporte, soporte_id)
+        self.assertEqual(row.responsabilidad_falla, 'cliente')
+        self.assertEqual(row.problema, self.payload['problema'])
+
     def test_only_open_field_support_can_notify(self):
         for changes in [dict(tipo='remoto'), dict(estado='resuelto'), dict(fecha_cierre='2026-10-26')]:
             self.assertEqual(self.notify(self.create(**changes)).status_code, 409)
@@ -301,9 +348,18 @@ class SoporteSchemaTest(unittest.TestCase):
             schema.ensure_soporte_schema(engine)
             schema.ensure_soporte_schema(engine)
             self.assertIn('sugerencia', {item['name'] for item in inspect(engine).get_columns('soporte')})
+            self.assertIn('responsabilidad_falla', {item['name'] for item in inspect(engine).get_columns('soporte')})
             self.assertTrue(inspect(engine).has_table('soporte_avisos_terreno'))
             with engine.connect() as connection:
                 self.assertEqual(tuple(connection.execute(text('SELECT problema, sugerencia FROM soporte')).one()), ('Problema anterior', None))
+                self.assertEqual(connection.execute(text('SELECT responsabilidad_falla FROM soporte')).scalar_one(), 'por_determinar')
+                connection.execute(text("UPDATE soporte SET responsabilidad_falla = 'terceros'"))
+                connection.commit()
+            schema.ensure_soporte_schema(engine)
+            with engine.connect() as connection:
+                self.assertEqual(connection.execute(text('SELECT responsabilidad_falla FROM soporte')).scalar_one(), 'terceros')
+                connection.execute(text("INSERT INTO soporte (id_soporte, problema) VALUES (2, 'Ingreso sin responsabilidad')"))
+                self.assertEqual(connection.execute(text('SELECT responsabilidad_falla FROM soporte WHERE id_soporte = 2')).scalar_one(), 'por_determinar')
         finally:
             engine.dispose()
 

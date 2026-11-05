@@ -84,6 +84,16 @@ def _get_datetime_attr(obj, attr):
     return getattr(obj, attr, None)
 
 
+def _normalizar_responsabilidad_falla(value):
+    if value is None:
+        return 'por_determinar'
+    if isinstance(value, str):
+        value = value.strip().lower() or 'por_determinar'
+        if value in ('por_determinar', 'cliente', 'orca', 'terceros'):
+            return value
+    raise ValueError('Responsabilidad de la falla invalida. Use por_determinar, cliente, orca o terceros.')
+
+
 def _usuario_autenticado():
     authorization = request.headers.get('Authorization', '')
     if not authorization.startswith('Bearer '):
@@ -101,6 +111,10 @@ def crear_soporte():
     if not usuario:
         return jsonify({"error": "Sesion invalida o expirada. Inicia sesion para crear el soporte."}), 401
     data = request.json
+    try:
+        responsabilidad_falla = _normalizar_responsabilidad_falla(data.get('responsabilidad_falla'))
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
     sugerencia = data.get('sugerencia')
     if sugerencia is not None and (not isinstance(sugerencia, str) or len(sugerencia) > 10000):
         return jsonify({'error': 'La sugerencia debe ser texto de hasta 10000 caracteres.'}), 400
@@ -136,6 +150,7 @@ def crear_soporte():
         categoria_falla=data.get('categoria_falla'),
         subcategoria_falla=data.get('subcategoria_falla'),
         permiso_trabajo=bool(data.get('permiso_trabajo', False)),
+        responsabilidad_falla=responsabilidad_falla,
         cambio_equipo=data.get('cambio_equipo', False),
         equipo_cambiado=data.get('equipo_cambiado'),
         origen=origen,
@@ -194,6 +209,7 @@ def obtener_soportes():
             "categoria_falla": soporte.categoria_falla,
             "subcategoria_falla": soporte.subcategoria_falla,
             "permiso_trabajo": bool(soporte.permiso_trabajo),
+            "responsabilidad_falla": soporte.responsabilidad_falla or 'por_determinar',
             "cambio_equipo": soporte.cambio_equipo,
             "equipo_cambiado": soporte.equipo_cambiado,
             "origen": soporte.origen or "cliente",
@@ -518,6 +534,11 @@ def actualizar_soporte(id_soporte):
     if not _usuario_autenticado():
         return jsonify({'error': 'Sesion invalida o expirada.'}), 401
     data = request.json
+    if 'responsabilidad_falla' in data:
+        try:
+            responsabilidad_falla = _normalizar_responsabilidad_falla(data['responsabilidad_falla'])
+        except ValueError as exc:
+            return jsonify({'error': str(exc)}), 400
     sugerencia = data.get('sugerencia')
     if sugerencia is not None and (not isinstance(sugerencia, str) or len(sugerencia) > 10000):
         return jsonify({'error': 'La sugerencia debe ser texto de hasta 10000 caracteres.'}), 400
@@ -540,6 +561,8 @@ def actualizar_soporte(id_soporte):
     soporte.subcategoria_falla = data.get('subcategoria_falla', soporte.subcategoria_falla)
     if 'permiso_trabajo' in data:
         soporte.permiso_trabajo = bool(data.get('permiso_trabajo'))
+    if 'responsabilidad_falla' in data:
+        soporte.responsabilidad_falla = responsabilidad_falla
     soporte.cambio_equipo = data.get('cambio_equipo', soporte.cambio_equipo)
     soporte.equipo_cambiado = data.get('equipo_cambiado', soporte.equipo_cambiado)
     if 'origen' in data:
