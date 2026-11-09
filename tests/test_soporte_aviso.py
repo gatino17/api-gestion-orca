@@ -2,11 +2,13 @@ import importlib
 import sys
 import types
 import unittest
+from io import BytesIO
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 import jwt
 from flask import Flask
+from openpyxl import load_workbook
 from sqlalchemy import create_engine, inspect, text
 
 
@@ -116,6 +118,94 @@ class SoporteAvisoTest(unittest.TestCase):
         response = self.client.put(f'/api/soporte/{soporte_id}', json={'prioridad': 'baja'}, headers=self.headers)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(db.session.get(models.Soporte, soporte_id).responsabilidad_falla, 'terceros')
+
+    def autorizar_excel(self):
+        usuario = models.User.query.filter_by(email='tecnico@example.test').one()
+        usuario.rol = 'soporte'
+        db.session.commit()
+        return usuario
+
+    def test_excel_requires_session_and_current_detail_permission(self):
+        url = '/api/soporte/responsabilidad/excel?anio=2026'
+        self.assertEqual(self.client.get(url).status_code, 401)
+        self.assertEqual(self.client.get(url, headers=self.headers).status_code, 403)
+        user_id = models.User.query.first().id
+        for claims, status in [({'rol': 'admin', 'paginas': ['soporte_detalle']}, 403), ({'exp': 0}, 401)]:
+            headers = {'Authorization': 'Bearer ' + jwt.encode({'user_id': user_id, **claims}, auth.SECRET_KEY, algorithm='HS256')}
+            self.assertEqual(self.client.get(url, headers=headers).status_code, status)
+
+    def test_excel_exports_all_months_of_selected_year_without_modifying_cases(self):
+        self.create(fecha_soporte='2026-01-31', responsabilidad_falla='cliente', solucion='Solucion enero')
+        self.create(fecha_soporte='2026-03-01', responsabilidad_falla='terceros')
+        self.create(fecha_soporte='2025-12-31')
+        self.create(fecha_soporte='2027-01-01')
+        self.autorizar_excel()
+        response = self.client.get('/api/soporte/responsabilidad/excel?anio=2026', headers=self.headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data.startswith(b'PK'))
+        self.assertEqual(response.mimetype, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        self.assertIn('attachment', response.headers['Content-Disposition'])
+        self.assertIn('Responsabilidad-fallas-2026.xlsx', response.headers['Content-Disposition'])
+        self.assertIn('no-store', response.headers['Cache-Control'])
+        hoja = load_workbook(BytesIO(response.data)).active
+        self.assertEqual(hoja['F19'].value, 2)
+        self.assertEqual(hoja['B7'].value, 1)
+        self.assertEqual(hoja['D9'].value, 1)
+        self.assertEqual(hoja['H23'].value, 'Solucion enero')
+        self.assertEqual(models.Soporte.query.count(), 4)
+        self.send.assert_not_called()
+
+    def test_excel_respects_client_and_literal_center_filters(self):
+        primero = db.session.get(models.Centro, 1)
+        primero.nombre = 'Centro 100%_Norte'
+        cliente = models.Cliente(nombre='Otro cliente')
+        db.session.add(cliente)
+        db.session.flush()
+        razon = models.RazonSocial(cliente_id=cliente.id_cliente, razon_social='Otro SPA')
+        db.session.add(razon)
+        db.session.flush()
+        db.session.add_all([
+            models.Centro(id_centro=2, nombre='Centro 100XXNorte', area='Chiloe', cliente_id=primero.cliente_id, razon_social_id=primero.razon_social_id),
+            models.Centro(id_centro=3, nombre='Otro centro', area='Chiloe', cliente_id=cliente.id_cliente, razon_social_id=razon.id_razon_social),
+        ])
+        db.session.commit()
+        self.create(centro_id=1)
+        self.create(centro_id=2)
+        self.create(centro_id=3)
+        self.autorizar_excel()
+        response = self.client.get('/api/soporte/responsabilidad/excel', query_string={'anio': 2026, 'centro': '%_'}, headers=self.headers)
+        libro = load_workbook(BytesIO(response.data))
+        self.assertEqual(libro.sheetnames, ['Cliente Prueba'])
+        self.assertEqual(libro.active['F19'].value, 1)
+        self.assertEqual(libro.active['C23'].value, 'Centro 100%_Norte')
+        response = self.client.get('/api/soporte/responsabilidad/excel', query_string={'anio': 2026, 'cliente': 'Otro cliente'}, headers=self.headers)
+        libro = load_workbook(BytesIO(response.data))
+        self.assertEqual(libro.sheetnames, ['Otro cliente'])
+        self.assertEqual(libro.active['F19'].value, 1)
+
+    def test_excel_rejects_invalid_years_and_returns_valid_empty_workbook(self):
+        self.autorizar_excel()
+        for anio in ['', 'no-valido', '0', '10000', '2026.5']:
+            response = self.client.get('/api/soporte/responsabilidad/excel', query_string={'anio': anio}, headers=self.headers)
+            self.assertEqual(response.status_code, 400)
+        response = self.client.get('/api/soporte/responsabilidad/excel?anio=2026', headers=self.headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(load_workbook(BytesIO(response.data)).sheetnames, ['Sin casos'])
+
+    def test_excel_custom_role_permission_can_be_revoked_without_reissuing_token(self):
+        usuario = self.autorizar_excel()
+        usuario.rol = 'lector_detalle'
+        role = models.Role(nombre='lector_detalle')
+        db.session.add(role)
+        db.session.flush()
+        permiso = models.RolePage(role_id=role.id_role, page_key='soporte_detalle')
+        db.session.add(permiso)
+        db.session.commit()
+        url = '/api/soporte/responsabilidad/excel?anio=2026'
+        self.assertEqual(self.client.get(url, headers=self.headers).status_code, 200)
+        db.session.delete(permiso)
+        db.session.commit()
+        self.assertEqual(self.client.get(url, headers=self.headers).status_code, 403)
 
     def test_empty_responsibility_is_unknown_and_invalid_values_do_not_modify_support(self):
         for value in [None, '', '  ']:

@@ -1,12 +1,14 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 import hashlib
 
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, current_app, request, jsonify, send_file
 import jwt
 from sqlalchemy import or_, text
+from sqlalchemy.orm import joinedload
 
 from ..models import Soporte, Centro, Cliente, Ismael, SoporteCaseTomado, SoporteAvisoTerreno, User
 from ..database import db
+from ..permissions import get_pages_for_role_name
 from ..socketio_ext import emit_soporte_event
 from ..soporte_correo import AvisoCorreoError, elegible_aviso, notificar_terreno, serializar_aviso
 from .auth_routes import SECRET_KEY
@@ -179,6 +181,45 @@ def crear_soporte():
     })
 
     return jsonify({"message": "Soporte creado exitosamente", "id_soporte": nuevo_soporte.id_soporte}), 201
+
+@soporte_blueprint.route('/responsabilidad/excel', methods=['GET'])
+def exportar_responsabilidad_excel():
+    usuario = _usuario_autenticado()
+    if not usuario:
+        return jsonify({'error': 'Sesion invalida o expirada.'}), 401
+    if 'soporte_detalle' not in get_pages_for_role_name(usuario.rol):
+        return jsonify({'error': 'No tienes permiso para consultar el detalle de soporte.'}), 403
+    try:
+        anio = int(request.args.get('anio', ''))
+        if not 1900 <= anio <= 9998:
+            raise ValueError
+    except (ValueError, TypeError):
+        return jsonify({'error': 'Selecciona un ano valido para descargar el Excel.'}), 400
+    cliente = str(request.args.get('cliente') or '').strip()
+    centro = str(request.args.get('centro') or '').strip()
+    consulta = Soporte.query.options(joinedload(Soporte.centro).joinedload(Centro.cliente)).filter(
+        Soporte.fecha_soporte >= date(anio, 1, 1), Soporte.fecha_soporte < date(anio + 1, 1, 1))
+    if cliente:
+        consulta = consulta.filter(Soporte.centro.has(Centro.cliente.has(Cliente.nombre == cliente)))
+    if centro:
+        consulta = consulta.filter(Soporte.centro.has(db.func.lower(Centro.nombre).contains(centro.lower(), autoescape=True)))
+    campos = ('id_soporte', 'case_code', 'fecha_soporte', 'fecha_cierre', 'responsabilidad_falla',
+              'estado', 'problema', 'solucion', 'categoria_falla', 'origen')
+    registros = [{**{campo: getattr(item, campo) for campo in campos},
+                  'cliente': item.centro.cliente.nombre if item.centro and item.centro.cliente else None,
+                  'centro': item.centro.nombre if item.centro else None} for item in consulta.all()]
+    try:
+        from ..soporte_excel import generar_responsabilidad_excel
+        archivo = generar_responsabilidad_excel(registros, anio, centro=centro)
+    except Exception:
+        current_app.logger.exception('Error generando Excel de responsabilidad de soporte para %s', anio)
+        return jsonify({'error': 'No se pudo generar el Excel. Solicita revisar el registro del backend.'}), 500
+    respuesta = send_file(archivo, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                          as_attachment=True, download_name=f'Responsabilidad-fallas-{anio}.xlsx', max_age=0)
+    respuesta.headers['Cache-Control'] = 'private, no-store'
+    respuesta.headers['X-Content-Type-Options'] = 'nosniff'
+    return respuesta
+
 
 # Listar todos los registros de soporte
 @soporte_blueprint.route('/', methods=['GET'])
