@@ -204,7 +204,7 @@ def exportar_responsabilidad_excel():
     if centro:
         consulta = consulta.filter(Soporte.centro.has(db.func.lower(Centro.nombre).contains(centro.lower(), autoescape=True)))
     campos = ('id_soporte', 'case_code', 'fecha_soporte', 'fecha_cierre', 'responsabilidad_falla',
-              'estado', 'problema', 'solucion', 'categoria_falla', 'origen')
+              'estado', 'problema', 'solucion', 'categoria_falla', 'origen', 'permiso_trabajo')
     registros = [{**{campo: getattr(item, campo) for campo in campos},
                   'cliente': item.centro.cliente.nombre if item.centro and item.centro.cliente else None,
                   'centro': item.centro.nombre if item.centro else None} for item in consulta.all()]

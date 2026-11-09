@@ -135,7 +135,7 @@ class SoporteAvisoTest(unittest.TestCase):
             self.assertEqual(self.client.get(url, headers=headers).status_code, status)
 
     def test_excel_exports_all_months_of_selected_year_without_modifying_cases(self):
-        self.create(fecha_soporte='2026-01-31', responsabilidad_falla='cliente', solucion='Solucion enero')
+        self.create(fecha_soporte='2026-01-31', responsabilidad_falla='cliente', solucion='Solucion enero', permiso_trabajo=True)
         self.create(fecha_soporte='2026-03-01', responsabilidad_falla='terceros')
         self.create(fecha_soporte='2025-12-31')
         self.create(fecha_soporte='2027-01-01')
@@ -152,6 +152,10 @@ class SoporteAvisoTest(unittest.TestCase):
         self.assertEqual(hoja['B7'].value, 1)
         self.assertEqual(hoja['D9'].value, 1)
         self.assertEqual(hoja['H23'].value, 'Solucion enero')
+        self.assertEqual(hoja['G7'].value, 1)
+        self.assertEqual(hoja['G19'].value, 1)
+        self.assertEqual(hoja['K23'].value, 'Si')
+        self.assertEqual(hoja['K24'].value, 'No')
         self.assertEqual(models.Soporte.query.count(), 4)
         self.send.assert_not_called()
 

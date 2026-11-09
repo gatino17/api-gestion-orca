@@ -87,39 +87,50 @@ def generar_responsabilidad_excel(registros, anio, centro=''):
         hoja = libro.create_sheet(_titulo_hoja(cliente, usados))
         hoja.sheet_view.showGridLines = False
         hoja.sheet_view.zoomScale = 85
-        _banda(hoja, 1, 'OrcaGest | Responsabilidad de la falla', 10)
+        _banda(hoja, 1, 'OrcaGest | Responsabilidad de la falla', 11)
         _texto(hoja.cell(2, 1), cliente)
-        hoja.merge_cells('A2:J2')
+        hoja.merge_cells('A2:K2')
         hoja.cell(2, 1).font = Font(size=14, bold=True, color=AZUL)
-        _texto(hoja.cell(3, 1), f'A\u00f1o: {anio} | Centro: {centro or "Todos"} | Casos: {len(casos)}')
-        hoja.merge_cells('A3:J3')
-        _banda(hoja, 5, 'Resumen mensual', 6)
-        _encabezados(hoja, 6, ['Mes', *RESPONSABILIDADES.values(), 'Total'])
+        total_permisos = sum(caso.get('permiso_trabajo') is True for caso in casos)
+        _texto(hoja.cell(3, 1), f'A\u00f1o: {anio} | Centro: {centro or "Todos"} | Casos: {len(casos)} | Con permiso de trabajo: {total_permisos}')
+        hoja.merge_cells('A3:K3')
+        _banda(hoja, 5, 'Resumen mensual', 7)
+        _encabezados(hoja, 6, ['Mes', *RESPONSABILIDADES.values(), 'Total', 'Con permiso de trabajo'])
         conteos = [[0] * 4 for _ in range(12)]
+        permisos_por_mes = [0] * 12
         claves = list(RESPONSABILIDADES)
         for caso in casos:
             responsabilidad = str(caso.get('responsabilidad_falla') or '').strip().lower()
             indice = claves.index(responsabilidad) if responsabilidad in claves else 3
-            conteos[_fecha(caso['fecha_soporte']).month - 1][indice] += 1
+            mes_indice = _fecha(caso['fecha_soporte']).month - 1
+            conteos[mes_indice][indice] += 1
+            if caso.get('permiso_trabajo') is True:
+                permisos_por_mes[mes_indice] += 1
         for fila, (mes, valores) in enumerate(zip(MESES, conteos), 7):
             _texto(hoja.cell(fila, 1), mes)
-            for columna, valor in enumerate([*valores, sum(valores)], 2):
+            for columna, valor in enumerate([*valores, sum(valores), permisos_por_mes[fila - 7]], 2):
                 celda = hoja.cell(fila, columna, valor)
                 celda.alignment = Alignment(horizontal='center')
                 celda.number_format = '0'
-            for celda in hoja[fila][:6]:
+            for celda in hoja[fila][:7]:
                 celda.fill = PatternFill('solid', fgColor='F1F6FA' if fila % 2 else 'FFFFFF')
         _texto(hoja.cell(19, 1), 'Total anual')
         for columna in range(4):
             hoja.cell(19, columna + 2, sum(valores[columna] for valores in conteos))
         hoja.cell(19, 6, len(casos))
-        for celda in hoja[19][:6]:
+        hoja.cell(19, 7, total_permisos)
+        for celda in hoja[19][:7]:
             celda.font = Font(bold=True, color=AZUL)
             celda.fill = PatternFill('solid', fgColor='DBEAFE')
+        hoja.cell(19, 7).font = Font(bold=True, color='166534')
+        hoja.cell(19, 7).fill = PatternFill('solid', fgColor='DCFCE7')
+        _texto(hoja.cell(20, 1), 'Los casos con permiso de trabajo ya estan incluidos en el total de casos.')
+        hoja.merge_cells('A20:G20')
+        hoja.cell(20, 1).font = Font(size=9, italic=True, color='64748B')
 
-        _banda(hoja, 21, 'Detalle de casos', 10)
+        _banda(hoja, 21, 'Detalle de casos', 11)
         _encabezados(hoja, 22, ['Caso', 'Fecha', 'Centro', 'Responsabilidad', 'Estado', 'Fecha de cierre',
-                               'Problema', 'Solucion', 'Categoria', 'Origen del reporte'])
+                               'Problema', 'Solucion', 'Categoria', 'Origen del reporte', 'Permiso de trabajo'])
         for fila, caso in enumerate(casos, 23):
             responsabilidad = str(caso.get('responsabilidad_falla') or '').strip().lower()
             estado = str(caso.get('estado') or 'pendiente').strip().lower() or 'pendiente'
@@ -127,7 +138,8 @@ def generar_responsabilidad_excel(registros, anio, centro=''):
                        caso.get('centro') or 'Sin centro', RESPONSABILIDADES.get(responsabilidad, 'Por determinar'),
                        ESTADOS.get(estado, estado), _fecha(caso.get('fecha_cierre')),
                        caso.get('problema') or 'Sin descripcion', str(caso.get('solucion') or '').strip() or 'Sin solucion registrada',
-                       caso.get('categoria_falla') or 'Sin categoria', str(caso.get('origen') or 'cliente').capitalize()]
+                       caso.get('categoria_falla') or 'Sin categoria', str(caso.get('origen') or 'cliente').capitalize(),
+                       'Si' if caso.get('permiso_trabajo') is True else 'No']
             for columna, valor in enumerate(valores, 1):
                 celda = hoja.cell(fila, columna)
                 if isinstance(valor, date):
@@ -138,9 +150,12 @@ def generar_responsabilidad_excel(registros, anio, centro=''):
                 celda.alignment = Alignment(vertical='top', wrap_text=True)
             color = {'resuelto': 'DCFCE7', 'finalizado': 'DCFCE7', 'en_proceso': 'FEF3C7', 'pendiente': 'FEE2E2'}.get(estado, 'E2E8F0')
             hoja.cell(fila, 5).fill = PatternFill('solid', fgColor=color)
+            if caso.get('permiso_trabajo') is True:
+                hoja.cell(fila, 11).fill = PatternFill('solid', fgColor='DCFCE7')
+                hoja.cell(fila, 11).font = Font(bold=True, color='166534')
             lineas = max(sum(max(1, (len(parte) + 54) // 55) for parte in str(valor).split('\n')) for valor in valores[6:8])
             hoja.row_dimensions[fila].height = min(180, max(30, lineas * 15))
-        hoja.auto_filter.ref = f'A22:J{22 + len(casos)}'
+        hoja.auto_filter.ref = f'A22:K{22 + len(casos)}'
         hoja.freeze_panes = 'D7'
         hoja.print_options.horizontalCentered = True
         hoja.sheet_properties.pageSetUpPr.fitToPage = True
@@ -148,7 +163,7 @@ def generar_responsabilidad_excel(registros, anio, centro=''):
         hoja.page_setup.paperSize = hoja.PAPERSIZE_A3
         hoja.page_setup.fitToWidth = 1
         hoja.page_setup.fitToHeight = 0
-        for indice, ancho in enumerate([18, 14, 26, 24, 20, 16, 60, 60, 24, 22], 1):
+        for indice, ancho in enumerate([18, 14, 26, 24, 20, 16, 60, 60, 24, 22, 22], 1):
             hoja.column_dimensions[get_column_letter(indice)].width = ancho
 
     if not por_cliente:

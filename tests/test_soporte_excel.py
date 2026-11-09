@@ -45,7 +45,7 @@ class SoporteExcelTest(unittest.TestCase):
         self.assertEqual(hoja['E23'].fill.fgColor.rgb, '00DCFCE7')
         self.assertEqual(hoja['E24'].fill.fgColor.rgb, '00FEE2E2')
         self.assertEqual(hoja['F23'].value.date(), date(2026, 1, 6))
-        self.assertEqual(hoja.auto_filter.ref, 'A22:J24')
+        self.assertEqual(hoja.auto_filter.ref, 'A22:K24')
         self.assertEqual(libro['Cliente B']['E7'].value, 1)
         self.assertEqual(libro['Cliente B']['H23'].value, 'Sin solucion registrada')
         self.assertNotIn('#4', [hoja.cell(fila, 1).value for fila in range(23, hoja.max_row + 1)])
@@ -56,6 +56,34 @@ class SoporteExcelTest(unittest.TestCase):
         self.assertEqual(hoja['E7'].value, 1)
         self.assertEqual(hoja['B7'].value, 0)
         self.assertEqual(hoja['D23'].value, 'Por determinar')
+
+    def test_work_permits_have_monthly_and_annual_totals_and_are_identified_in_details(self):
+        casos = [
+            {**self.casos[0], 'permiso_trabajo': True},
+            {**self.casos[1], 'permiso_trabajo': False},
+            {**self.casos[1], 'id_soporte': 5, 'permiso_trabajo': True},
+            {**self.casos[2], 'permiso_trabajo': True},
+            {**self.casos[3], 'permiso_trabajo': True},
+        ]
+        libro = self.libro(casos)
+        hoja = libro['Cliente A']
+        self.assertEqual(hoja['G6'].value, 'Con permiso de trabajo')
+        self.assertEqual([hoja.cell(fila, 7).value for fila in range(7, 19)], [1, 1] + [0] * 10)
+        self.assertEqual(hoja['G19'].value, 2)
+        self.assertEqual(hoja['G19'].data_type, 'n')
+        self.assertEqual(hoja['F19'].value, 3)
+        self.assertIn('Con permiso de trabajo: 2', hoja['A3'].value)
+        self.assertEqual(hoja['K22'].value, 'Permiso de trabajo')
+        self.assertEqual([hoja.cell(fila, 11).value for fila in range(23, 26)], ['Si', 'No', 'Si'])
+        self.assertEqual(hoja['K23'].fill.fgColor.rgb, '00DCFCE7')
+        self.assertEqual(libro['Cliente B']['G19'].value, 1)
+
+    def test_unmarked_legacy_and_false_permits_are_not_counted(self):
+        for valor in [False, None, '', 'false', 'true', 1]:
+            hoja = self.libro([{**self.casos[0], 'permiso_trabajo': valor}]).active
+            self.assertEqual(hoja['G19'].value, 0)
+            self.assertEqual(hoja['K23'].value, 'No')
+        self.assertEqual(self.libro([self.casos[0]]).active['G19'].value, 0)
 
     def test_sheet_names_are_safe_unique_and_keep_full_client_name_inside(self):
         nombres = ['X' * 40 + ':A', 'X' * 40 + '/B', 'Ventas/Sur', 'Ventas:Sur', 'ventas-sur', "'Otro'"]
