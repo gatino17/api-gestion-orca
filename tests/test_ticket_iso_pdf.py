@@ -1,6 +1,8 @@
 import importlib.util
+import hashlib
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 from pypdf import PdfReader
 
@@ -33,6 +35,16 @@ class TicketISOPDFTest(unittest.TestCase):
                       '15/10/2026', 'Accion realizada', 'Persona accion', '16/10/2026', 'Causa identificada',
                       'Persona analisis', '17/10/2026', 'Consulta 5', 'Respuesta 5', 'Resultados obtenidos'):
             self.assertIn(valor, texto)
+
+    def test_pdf_supports_the_python38_md5_signature(self):
+        def legacy_md5(data=b''):
+            return hashlib.md5(data)
+
+        # Reproduce the server API without replacing hashlib globally.
+        with patch('reportlab.pdfbase.pdfdoc.md5', legacy_md5), patch('reportlab.lib.utils.md5', legacy_md5):
+            _reader, texto = self.render()
+        self.assertIn('OrcaGest', texto)
+        self.assertIn(self.ticket['numero_ticket'], texto)
 
     def test_long_text_and_seven_plans_paginate_without_losing_the_end(self):
         self.ticket.update(problema='x' * 10000, observaciones=('Resultado extenso ' * 500) + 'FIN RESULTADOS',
