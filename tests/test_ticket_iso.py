@@ -83,7 +83,7 @@ class TicketISOTest(unittest.TestCase):
         return self.client.post('/api/ticket-iso/', json={**self.payload, **changes}, headers=self.admin)
 
     def test_access_requires_session_and_current_permission(self):
-        for method, path in [('GET', '/'), ('GET', '/catalogos'), ('GET', '/1'), ('GET', '/1/pdf'), ('POST', '/'), ('PUT', '/1'), ('DELETE', '/1'), ('POST', '/1/planes-accion'), ('PATCH', '/1/planes-accion/1'), ('PATCH', '/1/cierre')]:
+        for method, path in [('GET', '/'), ('GET', '/catalogos'), ('GET', '/1'), ('GET', '/1/pdf'), ('POST', '/'), ('PUT', '/1'), ('DELETE', '/1'), ('POST', '/1/planes-accion'), ('PATCH', '/1/planes-accion/1'), ('DELETE', '/1/planes-accion/1'), ('PATCH', '/1/cierre')]:
             self.assertEqual(self.client.open('/api/ticket-iso' + path, method=method, json=self.payload).status_code, 401)
             self.assertEqual(self.client.open('/api/ticket-iso' + path, method=method, json=self.payload, headers=self.tecnico).status_code, 403)
         self.assertEqual(self.client.get('/api/ticket-iso/', headers=self.headers(self.admin_id, expired=True)).status_code, 401)
@@ -522,6 +522,72 @@ class TicketISOTest(unittest.TestCase):
         ticket = self.create(numero_ticket='PROTEGIDO').get_json()['ticket']
         token = jwt.encode({'user_id': self.encargado_id, 'rol': 'ticket iso'}, auth.SECRET_KEY, algorithm='HS256')
         self.assertEqual(self.client.delete('/api/ticket-iso/' + str(ticket['id_ticket']), headers={'Authorization': 'Bearer ' + token}).status_code, 403)
+
+    def test_delete_selected_plan_preserves_other_plans_and_case_closing(self):
+        ticket = self.create(estado='resuelto', fecha_cierre='2026-10-20').get_json()['ticket']
+        url = '/api/ticket-iso/' + str(ticket['id_ticket'])
+        for index in range(7):
+            self.client.post(url + '/planes-accion', json={'resultado_plan_accion': 'Plan ' + str(index)}, headers=self.admin)
+        before = self.client.get(url, headers=self.admin).get_json()['ticket']
+        selected = before['planes_accion'][3]['id_plan']
+        response = self.client.delete(url + '/planes-accion/' + str(selected), headers=self.admin)
+        self.assertEqual(response.status_code, 200)
+        after = response.get_json()['ticket']
+        self.assertEqual(len(after['planes_accion']), 6)
+        self.assertEqual([p['id_plan'] for p in after['planes_accion']], [p['id_plan'] for p in before['planes_accion'] if p['id_plan'] != selected])
+        for campo in ('estado', 'fecha_cierre', 'problema', 'observaciones', 'numero_ticket'):
+            self.assertEqual(after[campo], before[campo])
+        self.assertEqual(self.client.get(url, headers=self.admin).get_json()['ticket'], after)
+        self.assertEqual(self.client.delete(url + '/planes-accion/' + str(selected), headers=self.admin).status_code, 404)
+
+    def test_delete_plan_rejects_wrong_ticket_and_missing_plan(self):
+        first = self.create().get_json()['ticket']
+        second = self.create(numero_ticket='ISO-2026-002').get_json()['ticket']
+        url = '/api/ticket-iso/' + str(first['id_ticket'])
+        saved = self.client.post(url + '/planes-accion', json={'resultado_plan_accion': 'Conservar'}, headers=self.admin).get_json()['ticket']
+        selected = saved['planes_accion'][0]['id_plan']
+        for endpoint in ['/api/ticket-iso/' + str(second['id_ticket']) + '/planes-accion/' + str(selected),
+                         url + '/planes-accion/999', '/api/ticket-iso/999/planes-accion/' + str(selected)]:
+            self.assertEqual(self.client.delete(endpoint, headers=self.admin).status_code, 404)
+        self.assertEqual(self.client.get(url, headers=self.admin).get_json()['ticket']['planes_accion'], saved['planes_accion'])
+
+    def test_delete_plan_uses_current_role_and_allows_ticket_iso_variants(self):
+        for rol in ('ticket iso', 'ticket_iso', 'Ticket-ISO'):
+            role = models.Role(nombre=rol)
+            user = models.User(name='Responsable', email=rol + '@example.test', password_hash='test', rol=rol)
+            db.session.add_all([role, user])
+            db.session.flush()
+            db.session.add(models.RolePage(role_id=role.id_role, page_key='ticket_iso'))
+            db.session.commit()
+            ticket = self.create(numero_ticket=rol).get_json()['ticket']
+            url = '/api/ticket-iso/' + str(ticket['id_ticket'])
+            saved = self.client.post(url + '/planes-accion', json={'resultado_plan_accion': 'Eliminar'}, headers=self.admin).get_json()['ticket']
+            endpoint = url + '/planes-accion/' + str(saved['planes_accion'][0]['id_plan'])
+            self.assertEqual(self.client.delete(endpoint, headers=self.encargado).status_code, 403)
+            self.assertEqual(self.client.delete(endpoint, headers=self.headers(user.id)).status_code, 200)
+            self.assertEqual(self.client.get(url, headers=self.admin).get_json()['ticket']['planes_accion'], [])
+        token = jwt.encode({'user_id': self.encargado_id, 'rol': 'admin'}, auth.SECRET_KEY, algorithm='HS256')
+        self.assertEqual(self.client.delete('/api/ticket-iso/1/planes-accion/999', headers={'Authorization': 'Bearer ' + token}).status_code, 403)
+
+    def test_deleted_legacy_plan_is_not_reimported_on_restart(self):
+        ticket = self.create().get_json()['ticket']
+        record = db.session.get(models.TicketISO, ticket['id_ticket'])
+        record.resultado_plan_accion = 'Plan antiguo'
+        record.fecha_control = datetime(2026, 10, 15).date()
+        db.session.add(models.TicketISOPlanAccion(ticket=record, resultado_plan_accion='Plan antiguo', es_legado=True))
+        db.session.commit()
+        url = '/api/ticket-iso/' + str(ticket['id_ticket'])
+        saved = self.client.get(url, headers=self.admin).get_json()['ticket']
+        selected = saved['planes_accion'][0]['id_plan']
+        response = self.client.delete(url + '/planes-accion/' + str(selected), headers=self.admin)
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.get_json()['ticket']['resultado_plan_accion'])
+        self.assertIsNone(response.get_json()['ticket']['fecha_control'])
+        db.session.remove()
+        schema = importlib.import_module(NAMESPACE + '.ticket_iso_schema')
+        schema.ensure_ticket_iso_schema(db.engine)
+        schema.ensure_ticket_iso_schema(db.engine)
+        self.assertEqual(self.client.get(url, headers=self.admin).get_json()['ticket']['planes_accion'], [])
 
     def test_action_plan_validates_without_inserting_invalid_records(self):
         ticket = self.create().get_json()['ticket']

@@ -401,6 +401,25 @@ def editar_plan_accion(ticket_id, plan_id):
         return jsonify({'error': str(exc)}), 400
 
 
+@ticket_iso_blueprint.route('/<int:ticket_id>/planes-accion/<int:plan_id>', methods=['DELETE'])
+def eliminar_plan_accion(ticket_id, plan_id):
+    rol = re.sub(r'[\s-]+', '_', str(g.ticket_iso_usuario.rol or '').strip().lower())
+    if rol not in {'admin', 'ticket_iso'}:
+        return jsonify({'error': 'Solo los roles admin y Ticket ISO pueden eliminar planes de accion.'}), 403
+    ticket = db.session.get(TicketISO, ticket_id)
+    plan = TicketISOPlanAccion.query.filter_by(id_plan=plan_id, ticket_id=ticket_id).first()
+    if not ticket or not plan:
+        return jsonify({'error': 'El plan de accion ya no existe en este ticket.'}), 404
+    if plan.es_legado:
+        # Evita que la migracion vuelva a importar el plan eliminado tras un reinicio.
+        ticket.resultado_plan_accion = None
+        ticket.fecha_control = None
+    ticket.planes_accion.remove(plan)
+    ticket.updated_at = datetime.now(timezone.utc)
+    db.session.commit()
+    return jsonify({'ticket': _serializar(ticket), 'message': 'Plan de accion eliminado correctamente.'}), 200
+
+
 @ticket_iso_blueprint.route('/<int:ticket_id>/cierre', methods=['PATCH'])
 def cerrar_ticket(ticket_id):
     ticket = db.session.get(TicketISO, ticket_id)
