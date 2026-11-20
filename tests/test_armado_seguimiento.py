@@ -176,6 +176,114 @@ class SeguimientoRoutesTest(unittest.TestCase):
     def confirmar(self, name='Admin', **changes):
         return self.client.post('/armados/1/instalacion-confirmada', json={**self.payload, **changes}, headers=self.headers(name))
 
+    def preparar_asignacion_bulto(self):
+        self.armado.estado = 'en_proceso'
+        self.armado.cajas_estado_json = json.dumps({'Caja 1': 'abierta', 'Caja 2 - Equipos': 'abierta', 'Caja 3': 'cerrada'})
+        equipo = models.EquiposIP(centro_id=1, nombre='PC', numero_serie='SERIE-PC', codigo='31142', caja='Caja 1', estado_registro='normal')
+        material = models.ArmadoMaterial(armado_id=1, nombre='Cable', cantidad=12, caja='Caja 1', estado_registro='normal')
+        db.session.add_all([equipo, material])
+        db.session.commit()
+        return equipo, material, {'caja': 'Caja 2 - Equipos', 'equipos': [equipo.id_equipo], 'materiales': [material.id_material]}
+
+    def test_bulk_assignment_preserves_series_quantities_and_case_data(self):
+        equipo, material, payload = self.preparar_asignacion_bulto()
+        material.cantidad = 17  # Cambio de cantidad desde la web antes de confirmar en mobile.
+        equipo.observacion = 'Conservar informacion'
+        db.session.commit()
+        response = self.client.patch('/armados/1/asignar-bulto', json=payload, headers=self.headers('Tecnico'))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()['count'], 2)
+        self.assertEqual(material.cantidad, 17)
+        self.assertEqual(equipo.numero_serie, 'SERIE-PC')
+        self.assertEqual(equipo.codigo, '31142')
+        self.assertEqual(equipo.observacion, 'Conservar informacion')
+        self.assertEqual(equipo.caja, 'Caja 2 - Equipos')
+        self.assertEqual(material.caja, equipo.caja)
+        self.assertEqual(material.caja_tecnico_id, self.users['Tecnico'].id)
+        self.assertEqual(self.armado.estado, 'en_proceso')
+        movimientos = models.ArmadoCajaMovimiento.query.all()
+        self.assertEqual(len(movimientos), 2)
+        self.assertEqual({m.accion for m in movimientos}, {'asignacion_caja'})
+        self.assertTrue(all(m.cantidad_anterior == m.cantidad_nueva for m in movimientos))
+        socket.emit_armado_event.assert_called_once()
+
+    def test_bulk_assignment_checks_session_membership_and_current_database_role(self):
+        equipo, material, payload = self.preparar_asignacion_bulto()
+        for nombre in (None, 'Otro', 'Inventario', 'Operacion'):
+            headers = self.headers(nombre) if nombre else {}
+            self.assertEqual(self.client.patch('/armados/1/asignar-bulto', json=payload, headers=headers).status_code, 403 if nombre else 401)
+        self.assertEqual(equipo.caja, 'Caja 1')
+        self.assertEqual(self.client.patch('/armados/1/asignar-bulto', json=payload, headers=self.headers('Apoyo')).status_code, 200)
+        payload['caja'] = 'Caja 1'
+        self.assertEqual(self.client.patch('/armados/1/asignar-bulto', json=payload, headers=self.headers()).status_code, 200)
+
+    def test_bulk_assignment_rejects_closed_missing_and_virtual_destination(self):
+        equipo, material, payload = self.preparar_asignacion_bulto()
+        for caja, codigo in [('Caja 3', 409), ('Caja 99', 409), ('Pendiente de caja', 400), ('', 400), (None, 400)]:
+            with self.subTest(caja=caja):
+                self.assertEqual(self.client.patch('/armados/1/asignar-bulto', json={**payload, 'caja': caja}, headers=self.headers()).status_code, codigo)
+                self.assertEqual(equipo.caja, 'Caja 1')
+                self.assertEqual(material.caja, 'Caja 1')
+        for estado in ('prefinalizado', 'finalizado'):
+            self.armado.estado = estado
+            db.session.commit()
+            self.assertEqual(self.client.patch('/armados/1/asignar-bulto', json=payload, headers=self.headers()).status_code, 409)
+        self.assertEqual(models.ArmadoCajaMovimiento.query.count(), 0)
+
+    def test_bulk_assignment_validates_entire_selection_before_mutating(self):
+        equipo, material, payload = self.preparar_asignacion_bulto()
+        for changes in [{'equipos': [equipo.id_equipo, 999]}, {'materiales': [material.id_material, 999]}]:
+            self.assertEqual(self.client.patch('/armados/1/asignar-bulto', json={**payload, **changes}, headers=self.headers()).status_code, 409)
+            self.assertEqual(equipo.caja, 'Caja 1')
+            self.assertEqual(material.caja, 'Caja 1')
+        for estado in ('no_aplica', 'pendiente'):
+            material.estado_registro = estado
+            db.session.commit()
+            self.assertEqual(self.client.patch('/armados/1/asignar-bulto', json=payload, headers=self.headers()).status_code, 409)
+        self.assertEqual(models.ArmadoCajaMovimiento.query.count(), 0)
+
+    def test_bulk_assignment_cannot_move_materials_from_another_armado(self):
+        equipo, material, payload = self.preparar_asignacion_bulto()
+        otro = models.Armado(centro_id=1, tecnico_id=self.users['Otro'].id, estado='en_proceso')
+        db.session.add(otro)
+        db.session.flush()
+        ajeno = models.ArmadoMaterial(armado_id=otro.id_armado, nombre='Cable ajeno', cantidad=5, caja='Caja 1')
+        db.session.add(ajeno)
+        db.session.commit()
+        response = self.client.patch('/armados/1/asignar-bulto', json={**payload, 'materiales': [ajeno.id_material]}, headers=self.headers())
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(equipo.caja, 'Caja 1')
+        self.assertEqual(ajeno.caja, 'Caja 1')
+
+    def test_bulk_assignment_is_idempotent_and_deduplicates_ids(self):
+        equipo, material, payload = self.preparar_asignacion_bulto()
+        payload['equipos'] *= 3
+        for esperado in (2, 0):
+            response = self.client.patch('/armados/1/asignar-bulto', json=payload, headers=self.headers())
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.get_json()['count'], esperado)
+        self.assertEqual(models.ArmadoCajaMovimiento.query.count(), 2)
+
+    def test_bulk_assignment_rejects_malformed_payload_and_unsaved_ids(self):
+        self.preparar_asignacion_bulto()
+        for payload in [None, [], {}, {'caja': 'Caja 1'}, {'caja': 'Caja 1', 'equipos': [True]},
+                        {'caja': 'Caja 1', 'materiales': ['local-1']}, {'caja': 'Caja 1', 'equipos': [-1]},
+                        {'caja': 'Caja 1', 'equipos': [1], 'cantidad': 0}, {'caja': 'Caja 1', 'materiales': list(range(1, 502))}]:
+            with self.subTest(payload=payload):
+                self.assertEqual(self.client.patch('/armados/1/asignar-bulto', json=payload, headers=self.headers()).status_code, 400)
+        self.assertEqual(models.ArmadoCajaMovimiento.query.count(), 0)
+
+    def test_bulk_assignment_rolls_back_if_commit_fails(self):
+        from sqlalchemy.exc import SQLAlchemyError
+        equipo, material, payload = self.preparar_asignacion_bulto()
+        with patch.object(db.session, 'commit', side_effect=SQLAlchemyError('Simulated failure')):
+            response = self.client.patch('/armados/1/asignar-bulto', json=payload, headers=self.headers())
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(equipo.caja, 'Caja 1')
+        self.assertEqual(material.caja, 'Caja 1')
+        self.assertEqual(models.ArmadoCajaMovimiento.query.count(), 0)
+        socket.emit_armado_event.assert_not_called()
+
     def crear_informe_instalacion(self):
         acta = models.ActaEntrega(centro_id=1, armado_id=1, fecha_registro=date(2026, 10, 19),
                                  tipo_instalacion='instalacion', tecnico_1='Tecnico')

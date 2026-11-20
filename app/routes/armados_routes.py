@@ -12,7 +12,7 @@ import re
 import json
 from sqlalchemy import and_, or_, func
 from sqlalchemy.orm import joinedload, selectinload
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from ..models import ArmadoInstalacionConfirmada, ArmadoActividadInstalacion, Actividad
 from ..armado_seguimiento import (hoy_chile, resumen_despacho, puede_confirmar_instalacion, clave_bulto,
                                 serializar_instalacion, actividad_instalacion_vigente, serializar_asignacion,
@@ -1219,6 +1219,80 @@ def eliminar_armado(id_armado):
     db.session.delete(armado)
     db.session.commit()
     return jsonify({"message": "Armado eliminado"}), 200
+
+
+@armados_blueprint.route('/<int:id_armado>/asignar-bulto', methods=['PATCH'])
+def asignar_bulto_multiple(id_armado):
+    usuario = usuario_actual_desde_token()
+    if not usuario:
+        return jsonify({'message': 'Debes iniciar sesion.'}), 401
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or set(data) - {'caja', 'equipos', 'materiales'}:
+        return jsonify({'message': 'Indica el bulto y los elementos seleccionados.'}), 400
+    ids = {}
+    for tipo in ('equipos', 'materiales'):
+        valores = data.get(tipo, [])
+        if not isinstance(valores, list) or any(type(valor) is not int or valor <= 0 for valor in valores):
+            return jsonify({'message': 'Los identificadores seleccionados no son validos.'}), 400
+        ids[tipo] = sorted(set(valores))
+    total = len(ids['equipos']) + len(ids['materiales'])
+    if total == 0 or total > 500:
+        return jsonify({'message': 'Selecciona entre 1 y 500 elementos.'}), 400
+    caja = data.get('caja')
+    if not isinstance(caja, str) or not clave_bulto(caja):
+        return jsonify({'message': 'Selecciona un bulto real.'}), 400
+    armado = Armado.query.filter_by(id_armado=id_armado).with_for_update().first()
+    if not armado:
+        return jsonify({'message': 'Armado no encontrado.'}), 404
+    asignado = usuario.id == armado.tecnico_id or ArmadoParticipacion.query.filter_by(
+        armado_id=id_armado, tecnico_id=usuario.id, fecha_fin=None).first() is not None
+    if str(usuario.rol or '').strip().lower() != 'admin' and not asignado:
+        return jsonify({'message': 'No estas asignado a este armado.'}), 403
+    if str(armado.estado or '').strip().lower() in {'prefinalizado', 'finalizado'}:
+        return jsonify({'message': 'Este armado es de solo lectura.'}), 409
+    estados = parse_cajas_estado(armado.cajas_estado_json)
+    if not estados:
+        estados = {nombre: 'abierta' for nombre in normalizar_lista_cajas(_cajas_con_contenido_armado(armado)) if clave_bulto(nombre)}
+    aliases = [nombre for nombre in estados if clave_bulto(nombre) == clave_bulto(caja)]
+    if not aliases:
+        return jsonify({'message': 'Ese bulto ya no pertenece a este armado.'}), 409
+    if any(estados[nombre] == 'cerrada' for nombre in aliases):
+        return jsonify({'message': 'El bulto esta cerrado. Selecciona uno abierto.'}), 409
+    caja = aliases[0]
+    if len(caja) > 50:
+        return jsonify({'message': 'El nombre del bulto supera los 50 caracteres.'}), 400
+    equipos = EquiposIP.query.filter(EquiposIP.id_equipo.in_(ids['equipos']), EquiposIP.centro_id == armado.centro_id).order_by(EquiposIP.id_equipo).with_for_update().all()
+    materiales = ArmadoMaterial.query.filter(ArmadoMaterial.id_material.in_(ids['materiales']), ArmadoMaterial.armado_id == id_armado).order_by(ArmadoMaterial.id_material).with_for_update().all()
+    if len(equipos) != len(ids['equipos']) or len(materiales) != len(ids['materiales']):
+        return jsonify({'message': 'Un elemento ya no existe o no pertenece a este armado. Actualiza la lista.'}), 409
+    for item in [*equipos, *materiales]:
+        if str(item.estado_registro or 'normal').strip().lower() != 'normal':
+            return jsonify({'message': 'No se pueden asignar elementos pendientes o que no aplican.'}), 409
+    if any(not (str(item.numero_serie or '').strip() or str(item.codigo or '').strip()) for item in equipos) or any((item.cantidad or 0) <= 0 for item in materiales):
+        return jsonify({'message': 'Los elementos seleccionados deben tener datos o cantidad mayor a cero.'}), 409
+    cambios = 0
+    try:
+        for tipo, items in (('equipo', equipos), ('material', materiales)):
+            for item in items:
+                if item.caja == caja:
+                    continue
+                item.caja = caja
+                item.caja_tecnico_id = usuario.id
+                cantidad = item.cantidad if tipo == 'material' else 1
+                db.session.add(ArmadoCajaMovimiento(armado_id=id_armado, tipo=tipo,
+                    item_id=item.id_material if tipo == 'material' else item.id_equipo,
+                    nombre_item=item.nombre, caja=caja, cantidad=cantidad, accion='asignacion_caja',
+                    numero_serie=item.numero_serie if tipo == 'equipo' else None,
+                    cantidad_anterior=cantidad, cantidad_nueva=cantidad, tecnico_id=usuario.id))
+                cambios += 1
+        db.session.commit()
+    except SQLAlchemyError:
+        db.session.rollback()
+        current_app.logger.exception('No se pudo asignar el bulto del armado %s', id_armado)
+        return jsonify({'message': 'No se pudo guardar la asignacion. Intenta nuevamente.'}), 500
+    if cambios:
+        emitir_actualizacion_armado(id_armado, 'asignacion_caja')
+    return jsonify({'caja': caja, 'count': cambios, **ids}), 200
 
 
 @armados_blueprint.route('/<int:id_armado>/materiales', methods=['GET'])
