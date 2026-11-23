@@ -4,8 +4,9 @@ from flask import Response
 
 from flask import Blueprint, request, jsonify, send_file
 from datetime import datetime
+from uuid import uuid4
 from werkzeug.utils import secure_filename
-from ..models import Mantencion, Centro, db
+from ..models import Mantencion, Centro, Soporte, SoporteDocumentoMantencion, db
 
 # Crear el blueprint
 mantenciones_blueprint = Blueprint('mantenciones', __name__)
@@ -45,10 +46,31 @@ def obtener_mantenciones_por_centro(centro_id):
 #@mantenciones_blueprint.route('/', methods=['POST'])
 def crear_mantencion_logic(data, file):
     """Crea una mantención y la guarda en la base de datos."""
+    archivo_guardado = None
     try:
         centro_id = data.get('centro_id')
-        if not centro_id or not Centro.query.get(centro_id):
+        centro = db.session.get(Centro, centro_id) if centro_id else None
+        if not centro:
             return {"error": "Centro no encontrado"}, 404
+
+        soporte = None
+        usuario = None
+        if data.get('soporte_id') not in (None, ''):
+            from .mantencion_intervenciones_routes import autorizar_documentos
+            usuario, error = autorizar_documentos()
+            if error:
+                return error
+            raw_id = data.get('soporte_id')
+            if isinstance(raw_id, bool) or not str(raw_id).isdigit() or int(raw_id) <= 0:
+                return {'error': 'Soporte invalido.'}, 400
+            soporte = Soporte.query.filter_by(id_soporte=int(raw_id)).with_for_update().first()
+            if not soporte or soporte.centro_id != centro.id_centro or (soporte.tipo or '').strip().lower() != 'terreno':
+                return {'error': 'Selecciona un soporte de terreno de este centro.'}, 400
+            if not file or not file.filename:
+                return {'error': 'Debes adjuntar el documento de esta intervencion.'}, 400
+
+        if file and file.filename and not is_allowed_file(file.filename):
+            return {'error': 'Formato no permitido. Adjunta PDF, PNG o JPG.'}, 400
 
         fecha_mantencion = data.get('fecha_mantencion')
         if not fecha_mantencion:
@@ -57,9 +79,10 @@ def crear_mantencion_logic(data, file):
 
         documento_path = None
         if file and is_allowed_file(file.filename):
-            filename = f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{secure_filename(file.filename)}"
+            filename = f"{uuid4().hex}_{secure_filename(file.filename)}"
             documento_path = f"mantenciones_docs/{filename}"
-            file.save(os.path.join(UPLOAD_FOLDER, filename))
+            archivo_guardado = os.path.join(UPLOAD_FOLDER, filename)
+            file.save(archivo_guardado)
 
         nueva_mantencion = Mantencion(
             centro_id=centro_id,
@@ -69,10 +92,20 @@ def crear_mantencion_logic(data, file):
             observacion=data.get('observacion')
         )
         db.session.add(nueva_mantencion)
+        if soporte:
+            # El documento y su vinculo se confirman en la misma transaccion.
+            db.session.flush()
+            db.session.add(SoporteDocumentoMantencion(
+                soporte_id=soporte.id_soporte,
+                mantencion_id=nueva_mantencion.id_mantencion,
+                creado_por_id=usuario.id,
+            ))
         db.session.commit()
         return {"message": "Mantención creada exitosamente", "id_mantencion": nueva_mantencion.id_mantencion}, 201
     except Exception as e:
         db.session.rollback()
+        if archivo_guardado and os.path.exists(archivo_guardado):
+            os.remove(archivo_guardado)
         return {"error": str(e)}, 400
 
 # Descargar el documento asociado a una mantención

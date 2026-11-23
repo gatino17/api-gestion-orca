@@ -1,6 +1,7 @@
 from flask import Blueprint, jsonify, request, send_file
 from ..models import Cliente, Centro, Levantamiento, InstalacionNueva, Mantencion, Traslado, Cese, Retiro, EquiposIP, Soporte, Inventario
 from ..database import db
+from ..mantencion_intervenciones import intervenciones_por_centro
 
 
 from reportlab.lib.pagesizes import letter
@@ -146,6 +147,8 @@ def obtener_historial_centro(centro_id):
                 } for s in Soporte.query.filter_by(centro_id=centro_id).all()
             ]
         }
+
+        historial['intervenciones_mantencion'] = intervenciones_por_centro([centro_id])[centro_id]['items']
 
         # Datos IP
         datos_ip = [

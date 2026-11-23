@@ -1,5 +1,6 @@
 from flask import Blueprint, request, jsonify
 from sqlalchemy import and_, literal, func, case
+from ..mantencion_intervenciones import intervenciones_por_centro
 from .levantamientos_routes import crear_levantamiento_logic, actualizar_levantamiento_logic, eliminar_levantamiento_logic, obtener_levantamientos_logic
 from .ceses_routes import  crear_cese_logic, eliminar_ceses_por_centro
 from .retiros_routes import crear_retiro_logic, eliminar_retiros_por_centro
@@ -187,6 +188,7 @@ def listar_actas():
          .filter(*filtros_base) 
                 
         actividades_rows = actividades_query.all()
+        intervenciones = intervenciones_por_centro([r.id_centro for r in actividades_rows])
 
         actividades_result = []
         for row in actividades_rows:
@@ -210,6 +212,7 @@ def listar_actas():
                 "mantencion_fecha": row.fecha_mantencion,
                 "mantencion_documento": row.documento_mantencion,
                 "cantidad_mantenciones_sistema": int(row.cantidad_mantenciones_sistema or 0),
+                "resumen_intervenciones_mantencion": intervenciones[row.id_centro]['resumen'],
                 "ultima_fecha_mantencion_sistema": row.ultima_fecha_mantencion_sistema,
                 "retiro_fecha": row.fecha_retiro,
                 "retiro_documento": row.documento_retiro,

@@ -533,6 +533,25 @@ class Soporte(db.Model):
         )
 
 
+class SoporteDocumentoMantencion(db.Model):
+    __tablename__ = 'soporte_documentos_mantencion'
+    __table_args__ = (
+        db.CheckConstraint('(mantencion_id IS NOT NULL AND mantencion_terreno_id IS NULL) OR '
+                           '(mantencion_id IS NULL AND mantencion_terreno_id IS NOT NULL)',
+                           name='ck_soporte_documento_un_origen'),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    soporte_id = db.Column(db.Integer, db.ForeignKey('soporte.id_soporte', ondelete='CASCADE'), nullable=False, index=True)
+    mantencion_id = db.Column(db.Integer, db.ForeignKey('mantenciones.id_mantencion', ondelete='CASCADE'), unique=True)
+    mantencion_terreno_id = db.Column(db.Integer, db.ForeignKey('mantenciones_terreno.id_mantencion_terreno', ondelete='CASCADE'), unique=True)
+    creado_por_id = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='SET NULL'))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    soporte = db.relationship('Soporte', backref=db.backref('documentos_mantencion', cascade='all, delete-orphan'))
+    manual = db.relationship('Mantencion', backref=db.backref('vinculos_soporte', cascade='all, delete-orphan'))
+    sistema = db.relationship('MantencionTerreno', backref=db.backref('vinculos_soporte', cascade='all, delete-orphan'))
+
+
 class TicketISO(db.Model):
     __tablename__ = 'tickets_iso'
 
