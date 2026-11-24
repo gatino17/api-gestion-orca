@@ -8,6 +8,7 @@ from ..armado_seguimiento import normalizar_estado, fechas_termino_instalacion
 from datetime import date
 from ..database import db
 from ..socketio_ext import emit_actividad_event
+from ..asignacion_correo import notificar_asignacion, usuario_para_aviso
 
 actividades_blueprint = Blueprint('actividades', __name__)
 JWT_KEYS = ["remoto753524"]
@@ -270,6 +271,9 @@ def _vincular_instalacion(actividad, data):
 @actividades_blueprint.route('/', methods=['POST'])
 def crear_actividad():
     data = dict(request.json or {})
+    usuario_aviso, error_aviso = usuario_para_aviso(data, _usuario_actual_desde_token, ('calendario',))
+    if error_aviso:
+        return jsonify(error_aviso[0]), error_aviso[1]
     try:
         _preparar_fechas(data)
     except ValueError as exc:
@@ -315,7 +319,10 @@ def crear_actividad():
         "centro_id": nueva_actividad.centro_id,
         "soporte_id": nueva_actividad.soporte_id,
     })
-    return jsonify({"message": "Actividad creada exitosamente", "id_actividad": nueva_actividad.id_actividad}), 201
+    resultado = {"message": "Actividad creada exitosamente", "id_actividad": nueva_actividad.id_actividad}
+    if usuario_aviso:
+        resultado['aviso_correo'] = notificar_asignacion(nueva_actividad, 'actividad', usuario_aviso)
+    return jsonify(resultado), 201
 
 # Listar todas las actividades
 @actividades_blueprint.route('/', methods=['GET'])
@@ -386,6 +393,9 @@ def obtener_actividades_mias():
 @actividades_blueprint.route('/<int:id_actividad>', methods=['PUT'])
 def actualizar_actividad(id_actividad):
     data = dict(request.json or {})
+    usuario_aviso, error_aviso = usuario_para_aviso(data, _usuario_actual_desde_token, ('calendario',))
+    if error_aviso:
+        return jsonify(error_aviso[0]), error_aviso[1]
     try:
         _preparar_fechas(data)
     except ValueError as exc:
@@ -436,7 +446,10 @@ def actualizar_actividad(id_actividad):
         "centro_id": actividad.centro_id,
         "soporte_id": actividad.soporte_id,
     })
-    return jsonify({"message": "Actividad actualizada exitosamente"}), 200
+    resultado = {"message": "Actividad actualizada exitosamente"}
+    if usuario_aviso:
+        resultado['aviso_correo'] = notificar_asignacion(actividad, 'actividad', usuario_aviso)
+    return jsonify(resultado), 200
 
 # Eliminar actividad
 @actividades_blueprint.route('/<int:id_actividad>', methods=['DELETE'])

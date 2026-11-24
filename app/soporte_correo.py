@@ -40,10 +40,12 @@ def _email(value):
     return bool(re.fullmatch(r'[^\s<>@,;]+@[^\s<>@,;]+\.[^\s<>@,;]+', value))
 
 
-def configuracion_correo():
-    recipients = list(dict.fromkeys(part.strip() for part in str(
-        _setting('SOPORTE_TERRENO_DESTINATARIOS', 'soporte@orcatecnologia.cl')
-    ).replace(';', ',').split(',') if part.strip()))
+def configuracion_correo(destinatarios=None):
+    if destinatarios is None:
+        destinatarios = [part.strip() for part in str(
+            _setting('SOPORTE_TERRENO_DESTINATARIOS', 'soporte@orcatecnologia.cl')
+        ).replace(';', ',').split(',') if part.strip()]
+    recipients = list(dict.fromkeys(destinatarios))
     sender = str(_setting('SMTP_FROM') or _setting('SMTP_USERNAME') or '').strip()
     host = str(_setting('SMTP_HOST') or '').strip()
     use_ssl = _boolean(_setting('SMTP_USE_SSL', False))
@@ -83,6 +85,11 @@ def enviar_mensaje(contenido, config, mensaje_id, enviado_por):
         'La sugerencia orienta la visita; no representa una reparacion ya realizada.',
     ]))
     message.add_alternative(renderizar_aviso_terreno(contenido, enviado_por), subtype='html')
+    enviar_email(message, config)
+
+
+def enviar_email(message, config):
+    """Transporte SMTP compartido; los destinatarios pertenecen a cada aviso."""
     sending = False
     try:
         context = ssl.create_default_context()
@@ -108,7 +115,7 @@ def enviar_mensaje(contenido, config, mensaje_id, enviado_por):
     except (OSError, smtplib.SMTPException) as exc:
         current_app.logger.warning('Fallo de conexion SMTP en aviso terreno (%s)', type(exc).__name__)
         if sending:
-            raise AvisoCorreoError('No se pudo confirmar el envio. Verifica el buzon de soporte antes de reenviar.', 'incierto') from None
+            raise AvisoCorreoError('No se pudo confirmar el envio. Verifica los buzones de destino antes de reenviar.', 'incierto') from None
         raise AvisoCorreoError('No se pudo conectar con el servidor de correo. Puedes reintentar.') from None
 
 

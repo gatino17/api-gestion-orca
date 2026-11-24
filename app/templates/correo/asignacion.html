@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="es">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Asignaci&oacute;n OrcaGest</title></head>
+<body style="margin:0;padding:0;background:#eef3f8;font-family:Arial,Helvetica,sans-serif;color:#193752;">
+  <div style="display:none;max-height:0;overflow:hidden;">{{ aviso.titulo }} en {{ aviso.centro }}. Inicio: {{ aviso.inicio }}.</div>
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#eef3f8;">
+    <tr><td align="center" style="padding:28px 12px;">
+      <table role="presentation" width="620" cellspacing="0" cellpadding="0" style="width:100%;max-width:620px;background:#ffffff;border:1px solid #dce7f1;border-radius:16px;">
+        <tr><td style="padding:26px 28px;border-top:5px solid #0875bc;border-bottom:1px solid #e5edf4;">
+          <div style="font-size:32px;font-weight:800;color:#0868b1;">OrcaGest</div>
+          <div style="font-size:11px;letter-spacing:1.5px;color:#63788e;">COORDINACI&Oacute;N OPERATIVA</div>
+        </td></tr>
+        <tr><td style="padding:26px 28px 18px;">
+          <p style="margin:0 0 8px;font-size:12px;color:#0875bc;font-weight:700;">TIENES UN TRABAJO ASIGNADO</p>
+          <h1 style="margin:0 0 18px;font-size:26px;color:#163b60;">{{ aviso.titulo }}</h1>
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#eef7ff;border:2px solid #1785ce;border-radius:10px;">
+            <tr><td style="padding:14px 18px;">
+              <div style="font-size:11px;color:#336a94;font-weight:700;">{{ 'ACTIVIDAD' if aviso.tipo == 'actividad' else 'ARMADO' }}</div>
+              <div style="font-size:32px;line-height:42px;font-weight:800;color:#0868b1;">#{{ aviso.numero }}</div>
+            </td></tr>
+          </table>
+        </td></tr>
+        <tr><td style="padding:0 28px 20px;">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f8fafc;border:1px solid #dfe8f1;border-radius:10px;">
+            <tr><td style="padding:18px;overflow-wrap:anywhere;">
+              <div style="font-size:11px;color:#63788e;">CENTRO</div>
+              <div style="font-size:22px;font-weight:700;margin:4px 0 10px;">{{ aviso.centro }}</div>
+              <div style="font-size:14px;line-height:24px;"><strong>Cliente:</strong> {{ aviso.cliente }}<br>
+                <strong>Inicio:</strong> {{ aviso.inicio }}<br><strong>T&eacute;rmino:</strong> {{ aviso.termino }}<br>
+                <strong>Estado:</strong> {{ aviso.estado }}{% if aviso.tipo == 'actividad' %}<br><strong>Prioridad:</strong> {{ aviso.prioridad }}{% endif %}
+              </div>
+            </td></tr>
+          </table>
+        </td></tr>
+        <tr><td style="padding:0 28px 22px;">
+          <h2 style="font-size:15px;color:#163b60;margin:0 0 8px;">Equipo asignado</h2>
+          <div style="font-size:14px;line-height:24px;overflow-wrap:anywhere;">{{ aviso.asignados|join(' / ') }}</div>
+          <h2 style="font-size:15px;color:#0868b1;margin:20px 0 10px;">Trabajo a realizar</h2>
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#eef7ff;border-left:4px solid #1785ce;">
+            <tr><td style="padding:16px;font-size:14px;line-height:23px;white-space:pre-wrap;overflow-wrap:anywhere;">{{ aviso.trabajo }}</td></tr>
+          </table>
+        </td></tr>
+        <tr><td style="padding:20px 28px;background:#f8fafc;border-top:1px solid #e6edf4;font-size:12px;line-height:20px;color:#63788e;">
+          Notificado por <strong style="color:#314c67;">{{ enviado_por }}</strong><br>
+          Consulta el detalle y registra los avances en OrcaGest o en la app m&oacute;vil.
+        </td></tr>
+      </table>
+      <p style="font-size:11px;color:#718399;">OrcaGest &middot; Aviso de asignaci&oacute;n de trabajo</p>
+    </td></tr>
+  </table>
+</body>
+</html>

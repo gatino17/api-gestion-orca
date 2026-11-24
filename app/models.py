@@ -658,6 +658,29 @@ class SoporteAvisoTerreno(db.Model):
     soporte = db.relationship('Soporte', backref=db.backref('avisos_terreno', cascade='all, delete-orphan'))
 
 
+class AsignacionAvisoCorreo(db.Model):
+    __tablename__ = 'asignacion_avisos_correo'
+    __table_args__ = (
+        db.CheckConstraint('(actividad_id IS NOT NULL AND armado_id IS NULL) OR '
+                           '(actividad_id IS NULL AND armado_id IS NOT NULL)',
+                           name='ck_aviso_asignacion_un_origen'),
+    )
+    id_aviso = db.Column(db.Integer, primary_key=True)
+    actividad_id = db.Column(db.Integer, db.ForeignKey('actividades.id_actividad', ondelete='CASCADE'), index=True)
+    armado_id = db.Column(db.Integer, db.ForeignKey('armados.id_armado', ondelete='CASCADE'), index=True)
+    clave = db.Column(db.String(64), unique=True, nullable=False)
+    contenido = db.Column(db.Text, nullable=False)
+    destinatarios = db.Column(db.Text, nullable=False)
+    mensaje_id = db.Column(db.String(200), nullable=False)
+    estado = db.Column(db.String(20), nullable=False, default='pendiente')
+    error = db.Column(db.Text)
+    enviado_por = db.Column(db.String(120), nullable=False)
+    fecha_intento = db.Column(db.DateTime(timezone=True))
+    fecha_envio = db.Column(db.DateTime(timezone=True))
+    actividad = db.relationship('Actividad', backref=db.backref('avisos_asignacion', cascade='all, delete-orphan'))
+    armado = db.relationship('Armado', backref=db.backref('avisos_asignacion', cascade='all, delete-orphan'))
+
+
 class SoporteCaseTomado(db.Model):
     __tablename__ = 'soporte_case_tomados'
 

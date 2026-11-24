@@ -3,6 +3,7 @@ from ..models import ActaEntrega, Armado, ArmadoParticipacion, ArmadoMaterial, A
 from ..models import ArmadoCajaMovimiento
 from ..database import db
 from ..socketio_ext import emit_armado_event, emit_actividad_event
+from ..asignacion_correo import notificar_asignacion, usuario_para_aviso
 from datetime import datetime
 from collections import defaultdict
 from types import SimpleNamespace
@@ -786,6 +787,9 @@ def confirmar_instalacion_armado(id_armado):
 @armados_blueprint.route('/', methods=['POST'])
 def crear_armado():
     data = request.json or {}
+    usuario_aviso, error_aviso = usuario_para_aviso(data, usuario_actual_desde_token, ('calendario',))
+    if error_aviso:
+        return jsonify(error_aviso[0]), error_aviso[1]
     centro_id = data.get('centro_id')
     tecnico_id = data.get('tecnico_id')
     tecnico_secundario_id = data.get('tecnico_secundario_id')
@@ -842,7 +846,10 @@ def crear_armado():
         db.session.add(participacion)
     db.session.commit()
     emitir_actualizacion_armado(nuevo.id_armado, "armado")
-    return jsonify({"message": "Armado creado", "id_armado": nuevo.id_armado}), 201
+    resultado = {"message": "Armado creado", "id_armado": nuevo.id_armado}
+    if usuario_aviso:
+        resultado['aviso_correo'] = notificar_asignacion(nuevo, 'armado', usuario_aviso)
+    return jsonify(resultado), 201
 
 
 @armados_blueprint.route('/guias-salida', methods=['GET'])
