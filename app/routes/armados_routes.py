@@ -1223,8 +1223,12 @@ def eliminar_caja_admin(id_armado):
 @armados_blueprint.route('/<int:id_armado>', methods=['DELETE'])
 def eliminar_armado(id_armado):
     armado = Armado.query.get_or_404(id_armado)
+    imagenes = [imagen.archivo for imagen in armado.imagenes_observacion]
     db.session.delete(armado)
     db.session.commit()
+    if imagenes:
+        from .armado_observacion_routes import limpiar_archivos_observacion
+        limpiar_archivos_observacion(imagenes)
     return jsonify({"message": "Armado eliminado"}), 200
 
 

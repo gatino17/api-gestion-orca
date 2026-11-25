@@ -40,6 +40,7 @@ from .routes.soporte_routes import soporte_blueprint
 from .routes.ticket_iso_routes import ticket_iso_blueprint
 from .routes.consultascentro_historial_routes import consultascentro_historial_bp
 from .routes.armados_routes import armados_blueprint
+from .routes.armado_observacion_routes import armado_observacion_blueprint
 from .routes.actas_entrega_routes import actas_entrega_blueprint
 from .routes.permisos_trabajo_routes import permisos_trabajo_blueprint
 from .routes.mantenciones_terreno_routes import mantenciones_terreno_blueprint
@@ -124,6 +125,7 @@ def create_app():
     app.register_blueprint(ticket_iso_blueprint, url_prefix='/api/ticket-iso')
     app.register_blueprint(consultascentro_historial_bp, url_prefix='/api/consultas_centro')
     app.register_blueprint(armados_blueprint, url_prefix='/api/armados')
+    app.register_blueprint(armado_observacion_blueprint, url_prefix='/api/armados')
     app.register_blueprint(actas_entrega_blueprint, url_prefix='/api/actas_entrega')
     app.register_blueprint(permisos_trabajo_blueprint, url_prefix='/api/permisos_trabajo')
     app.register_blueprint(mantenciones_terreno_blueprint, url_prefix='/api/mantenciones_terreno')

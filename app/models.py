@@ -1151,6 +1151,20 @@ class Armado(db.Model):
         )
 
 
+class ArmadoObservacionImagen(db.Model):
+    __tablename__ = 'armados_observacion_imagenes'
+    __table_args__ = (
+        db.UniqueConstraint('armado_id', 'posicion', name='uq_armado_observacion_posicion'),
+        db.CheckConstraint('posicion IN (1, 2)', name='ck_armado_observacion_dos_imagenes'),
+    )
+    id_imagen = db.Column(db.Integer, primary_key=True)
+    armado_id = db.Column(db.Integer, db.ForeignKey('armados.id_armado', ondelete='CASCADE'), nullable=False, index=True)
+    posicion = db.Column(db.Integer, nullable=False)
+    archivo = db.Column(db.String(80), nullable=False)
+    nombre = db.Column(db.String(200), nullable=False)
+    armado = db.relationship('Armado', backref=db.backref('imagenes_observacion', cascade='all, delete-orphan'))
+
+
 class ArmadoActividadInstalacion(db.Model):
     __tablename__ = 'armados_actividades_instalacion'
 
