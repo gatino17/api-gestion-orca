@@ -113,6 +113,27 @@ class ArmadoObservacionTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual([i['nombre'] for i in self.listado()['imagenes']], ['Plano del sistema', 'Interior del rack'])
 
+    def test_guardar_abrir_y_quitar_no_requieren_api_path_de_python_39(self):
+        with patch.object(Path, 'is_relative_to', side_effect=AttributeError('No disponible en Python 3.8'), create=True):
+            response = self.guardar({'imagen_1': imagen(), 'titulo_1': 'Plano'})
+            self.assertEqual(response.status_code, 200, response.get_json())
+            iid = self.listado()['imagenes'][0]['id_imagen']
+            response = self.client.get(f'/armados/1/observacion/imagenes/{iid}', headers=self.headers())
+            self.assertEqual(response.status_code, 200)
+            response.close()
+            self.assertEqual(self.guardar({'eliminar_1': 'true'}).status_code, 200)
+            self.assertEqual(self.archivos(), [])
+
+    def test_ruta_rechaza_nombres_invalidos_y_archivos_resueltos_fuera_del_directorio(self):
+        for nombre in ('../fuera.jpg', '/fuera.jpg', 'subcarpeta/' + 'a' * 32 + '.jpg'):
+            with self.assertRaises(ValueError):
+                routes._ruta(nombre)
+        directorio = Path(self.folder.name).resolve()
+        with patch.object(routes, '_directorio', return_value=directorio), \
+                patch.object(Path, 'resolve', return_value=directorio.parent / 'fuera.jpg'):
+            with self.assertRaises(ValueError):
+                routes._ruta('a' * 32 + '.jpg')
+
     def test_renombrar_no_requiere_subir_la_imagen_ni_modifica_el_archivo(self):
         self.guardar({'imagen_1': imagen(), 'titulo_1': 'Plano anterior'})
         previos = self.archivos()

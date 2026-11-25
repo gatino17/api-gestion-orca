@@ -1,4 +1,6 @@
 import os
+from pathlib import Path
+from uuid import uuid4
 from flask import Blueprint, request, jsonify, send_file
 from datetime import datetime
 from werkzeug.utils import secure_filename
@@ -9,6 +11,7 @@ instalaciones_blueprint = Blueprint('instalaciones', __name__)
 
 # Configuración para archivos
 ALLOWED_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.pdf'}
+MAX_DOCUMENTO_BYTES = 10 * 1024 * 1024
 UPLOAD_FOLDER = os.path.join(os.getcwd(), 'uploads/instalaciones_docs')
 
 # Crear el directorio de uploads si no existe
@@ -46,6 +49,8 @@ def get_instalaciones():
 # Crear una nueva instalación
 #@instalaciones_blueprint.route('/', methods=['POST'])
 def crear_instalacion_logic(data, file):
+    nuevo_archivo = None
+    archivo_anterior = None
     try:
         # Validar centro_id
         centro_id = data.get('centro_id')
@@ -67,10 +72,17 @@ def crear_instalacion_logic(data, file):
 
         # Guardar el archivo si esta presente
         documento_path = None
-        if file and is_allowed_file(file.filename):
-            filename = f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{secure_filename(file.filename)}"
+        if file:
+            if not is_allowed_file(file.filename):
+                return {"error": "Adjunta un documento PDF, JPG o PNG."}, 400
+            contenido = file.stream.read(MAX_DOCUMENTO_BYTES + 1)
+            if not contenido or len(contenido) > MAX_DOCUMENTO_BYTES:
+                return {"error": "El documento debe tener contenido y pesar como maximo 10 MB."}, 400
+            filename = f"{uuid4().hex}_{secure_filename(file.filename)}"
             documento_path = f"instalaciones_docs/{filename}"
-            file.save(os.path.join(UPLOAD_FOLDER, filename))
+            nuevo_archivo = Path(UPLOAD_FOLDER) / filename
+            nuevo_archivo.parent.mkdir(parents=True, exist_ok=True)
+            nuevo_archivo.write_bytes(contenido)
 
         instalacion = (
             InstalacionNueva.query.filter_by(centro_id=centro_id)
@@ -82,6 +94,7 @@ def crear_instalacion_logic(data, file):
             instalacion.fecha_instalacion = fecha_instalacion
             instalacion.inicio_monitoreo = inicio_monitoreo
             if documento_path:
+                archivo_anterior = instalacion.documento_acta
                 instalacion.documento_acta = documento_path
             if data.get('observacion') is not None:
                 instalacion.observacion = data.get('observacion')
@@ -96,12 +109,25 @@ def crear_instalacion_logic(data, file):
             db.session.add(instalacion)
 
         centro.fecha_instalacion = fecha_instalacion
+        db.session.flush()
+        instalacion_id = instalacion.id_instalacion
         db.session.commit()
-
-        return {"message": "Instalacion guardada exitosamente", "id_instalacion": instalacion.id_instalacion}, 201
     except Exception as e:
         db.session.rollback()
+        if nuevo_archivo:
+            nuevo_archivo.unlink(missing_ok=True)
         return {"error": str(e)}, 400
+
+    # El respaldo anterior se conserva hasta confirmar la transaccion.
+    if archivo_anterior and nuevo_archivo:
+        carpeta = Path(UPLOAD_FOLDER).resolve()
+        anterior = (carpeta / Path(archivo_anterior).name).resolve()
+        if anterior.parent == carpeta and archivo_anterior.startswith('instalaciones_docs/'):
+            try:
+                anterior.unlink(missing_ok=True)
+            except OSError:
+                pass
+    return {"message": "Instalacion guardada exitosamente", "id_instalacion": instalacion_id}, 201
 
 # Descargar el documento asociado a una instalación
 #@instalaciones_blueprint.route('/<int:id_instalacion>/documento', methods=['GET'])

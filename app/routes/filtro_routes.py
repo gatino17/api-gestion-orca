@@ -3,6 +3,8 @@ from flask import Blueprint, request, jsonify, send_file
 from sqlalchemy import and_, literal, func, case
 from sqlalchemy.orm import aliased
 import os
+from pathlib import Path
+from mimetypes import guess_type
 from ..models import (
     Cliente,
     Cese,
@@ -238,26 +240,25 @@ def descargar_documento(tipo, id):
             return jsonify({"error": "Tipo de documento no válido"}), 400
 
         # Buscar el registro
-        registro = modelo.query.get_or_404(id)
+        registro = db.session.get(modelo, id)
+        if not registro:
+            return jsonify({"error": "Registro no encontrado"}), 404
         documento = getattr(registro, columna)
 
         if not documento:
             return jsonify({"error": "No hay documento asociado"}), 404
 
         # Ruta completa del archivo
-        documento_path = os.path.join(os.getcwd(), 'uploads', documento.replace('/', os.sep))
-        if not os.path.exists(documento_path):
+        uploads = Path(os.getcwd(), 'uploads').resolve()
+        documento_path = (uploads / documento.replace('\\', '/')).resolve()
+        if uploads not in documento_path.parents or not documento_path.is_file():
             return jsonify({"error": "El archivo no existe"}), 404
 
         # Determinar el tipo MIME basado en la extensión del archivo
-        mimetype = "application/octet-stream"
-        if documento.endswith(('.png', '.jpg', '.jpeg')):
-            mimetype = "image/jpeg"
-        elif documento.endswith('.pdf'):
-            mimetype = "application/pdf"
+        mimetype = guess_type(str(documento_path))[0] or "application/octet-stream"
 
         # Enviar el archivo como respuesta
-        return send_file(documento_path, mimetype=mimetype)
+        return send_file(documento_path, mimetype=mimetype, as_attachment=False)
     except Exception as e:
         return jsonify({"error": f"Error al servir el documento: {str(e)}"}), 500
 

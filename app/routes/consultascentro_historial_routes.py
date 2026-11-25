@@ -95,7 +95,8 @@ def obtener_historial_centro(centro_id):
                 {
                     "id_instalacion": i.id_instalacion,
                     "fecha_instalacion": i.fecha_instalacion,
-                    "documento": f"{BASE_URL}/api/filtro/documento/Instalaciones/{i.id_instalacion}" if i.documento_acta else None,
+                    "inicio_monitoreo": i.inicio_monitoreo,
+                    "documento": f"/api/filtro/documento/Instalaciones/{i.id_instalacion}" if i.documento_acta else None,
                     "observacion":i.observacion
                 } for i in InstalacionNueva.query.filter_by(centro_id=centro_id).all()
             ],

@@ -39,7 +39,8 @@ def _ruta(nombre):
         raise ValueError('Archivo invalido.')
     directorio = _directorio()
     ruta = (directorio / nombre).resolve()
-    if not ruta.is_relative_to(directorio):
+    # Los nombres son UUID sin subcarpetas; compatible tambien con Python 3.8.
+    if ruta.parent != directorio:
         raise ValueError('Archivo invalido.')
     return ruta
 
