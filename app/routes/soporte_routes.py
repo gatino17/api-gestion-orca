@@ -253,7 +253,7 @@ def exportar_registros_pdf():
     por_id = {item.id_soporte: item for item in consulta.all()}
     if len(por_id) != len(ids):
         return jsonify(error='Los registros cambiaron. Actualiza la tabla y vuelve a exportar.'), 409
-    campos = ('id_soporte', 'case_code', 'fecha_soporte', 'fecha_cierre', 'creado_por_nombre', 'tipo', 'prioridad',
+    campos = ('id_soporte', 'case_code', 'fecha_soporte', 'created_at', 'fecha_cierre', 'creado_por_nombre', 'tipo', 'prioridad',
               'estado', 'problema', 'solucion', 'sugerencia', 'origen', 'responsabilidad_falla', 'categoria_falla',
               'subcategoria_falla', 'permiso_trabajo', 'cambio_equipo', 'equipo_cambiado')
     registros = [{**{campo: getattr(por_id[sid], campo) for campo in campos},

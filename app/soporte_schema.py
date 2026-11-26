@@ -18,6 +18,8 @@ def ensure_soporte_schema(engine):
         additions = {
             'sugerencia': 'TEXT',
             'responsabilidad_falla': "VARCHAR(20) NOT NULL DEFAULT 'por_determinar'",
+            # Sin valor retroactivo: no se conoce la hora de los registros antiguos.
+            'created_at': 'TIMESTAMP WITH TIME ZONE' if postgres else 'DATETIME',
         }
         for name, definition in additions.items():
             if name not in columns:

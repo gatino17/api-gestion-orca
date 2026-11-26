@@ -520,6 +520,7 @@ class Soporte(db.Model):
     external_case_key = db.Column(db.String(160), nullable=True)
     creado_por_id = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
     creado_por_nombre = db.Column(db.String(120), nullable=True)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=True, default=lambda: datetime.now(timezone.utc))
 
     # Relación con la tabla centros
     centro = db.relationship('Centro', backref=db.backref('soportes', cascade="all, delete-orphan"))

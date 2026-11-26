@@ -3,7 +3,7 @@ import io
 import sys
 import types
 import unittest
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -128,6 +128,50 @@ class SoportePDFTest(unittest.TestCase):
         for eliminado in ('Busqueda:', 'Periodo de la pagina:', 'Ano actual', 'Periodo:', 'Rango de la tabla:', '01/01/2026', '31/12/2026'):
             self.assertNotIn(eliminado, primera)
 
+    def test_contador_antes_de_caso_y_hora_real_despues_de_fecha(self):
+        db.session.get(models.Soporte, 3).created_at = datetime(2026, 10, 3, 13, 45)
+        db.session.get(models.Soporte, 2).created_at = datetime(2026, 10, 2, 0, 15)
+        db.session.commit()
+        original = pdf.LongTable
+        tablas = []
+
+        def capturar(filas, **kwargs):
+            tablas.append([[celda.getPlainText() for celda in fila] for fila in filas])
+            return original(filas, **kwargs)
+
+        with patch.object(pdf, 'LongTable', side_effect=capturar):
+            respuesta = self.exportar([3, 2])
+        texto = self.contenido(respuesta)
+        self.assertEqual(tablas[0][0], ['N', 'Caso', 'Centro / cliente', 'Fecha', 'Hora', 'Estado', 'Descripcion'])
+        self.assertEqual([fila[0] for fila in tablas[0][1:]], ['1', '2'])
+        self.assertEqual([fila[1] for fila in tablas[0][1:]], ['#3', '#2'])
+        self.assertEqual([fila[3] for fila in tablas[0][1:]], ['03/10/2026', '02/10/2026'])
+        self.assertEqual([fila[4] for fila in tablas[0][1:]], ['10:45', '21:15'])
+        self.assertIn('Hora de creacion: 10:45', texto)
+        self.assertIn('Hora de creacion: 21:15', texto)
+
+    def test_hora_de_creacion_respeta_utc_y_cambios_de_horario_de_chile(self):
+        self.assertEqual(pdf._hora_creacion(datetime(2026, 7, 3, 13, 45)), '09:45')
+        self.assertEqual(pdf._hora_creacion(datetime(2026, 10, 3, 13, 45, tzinfo=timezone.utc)), '10:45')
+        self.assertEqual(pdf._hora_creacion(datetime(2026, 10, 3, 10, 45, tzinfo=timezone(timedelta(hours=-3)))), '10:45')
+        self.assertEqual(pdf._hora_creacion(None), '-')
+        self.assertEqual(pdf._hora_creacion(date(2026, 10, 3)), '-')
+
+    def test_creacion_guarda_hora_real_y_editar_no_la_cambia(self):
+        antes = datetime.now(timezone.utc).replace(tzinfo=None)
+        respuesta = self.client.post('/api/soporte/', json={'centro_id': 1, 'fecha_soporte': '2026-10-01',
+            'tipo': 'remoto', 'problema': 'Nuevo evento', 'created_at': '2000-01-01T00:00:00Z'}, headers=self.headers())
+        self.assertEqual(respuesta.status_code, 201)
+        sid = respuesta.get_json()['id_soporte']
+        registro = db.session.get(models.Soporte, sid)
+        original = registro.created_at
+        guardado = original.astimezone(timezone.utc).replace(tzinfo=None) if original.tzinfo else original
+        self.assertGreaterEqual(guardado, antes)
+        self.assertLessEqual(guardado, datetime.now(timezone.utc).replace(tzinfo=None))
+        self.assertEqual(self.client.put(f'/api/soporte/{sid}', json={'prioridad': 'alta',
+            'created_at': '2000-01-01T00:00:00Z'}, headers=self.headers()).status_code, 200)
+        self.assertEqual(db.session.get(models.Soporte, sid).created_at, original)
+
     def test_resumen_largo_repite_cabeceras_y_no_mezcla_paginas_de_detalle(self):
         registros = [dict(id_soporte=i, centro='Centro', cliente='Cliente', fecha_soporte=date(2026, 10, 1),
                           estado='pendiente', problema=('Descripcion del evento ' + str(i) + ' ') * 15,
@@ -142,6 +186,24 @@ class SoportePDFTest(unittest.TestCase):
             self.assertNotIn('Solucion completa', texto)
         self.assertIn('#50', '\n'.join(paginas[:inicio_detalle]))
         self.assertIn('Solucion completa 50', '\n'.join(paginas[inicio_detalle:]))
+
+    def test_contador_es_continuo_a_traves_de_paginas_y_no_inventa_horas(self):
+        registros = [dict(id_soporte=100 + i, centro='Centro', cliente='Cliente', fecha_soporte=date(2026, 10, 1),
+                          problema='Problema de prueba ' * 10) for i in range(1, 51)]
+        original = pdf.LongTable
+        tablas = []
+
+        def capturar(filas, **kwargs):
+            tablas.append([[celda.getPlainText() for celda in fila] for fila in filas])
+            return original(filas, **kwargs)
+
+        with patch.object(pdf, 'LongTable', side_effect=capturar):
+            archivo = pdf.generar_registros_soporte_pdf(registros, {})
+        paginas = [pagina.extract_text() for pagina in PdfReader(archivo).pages]
+        inicio_detalle = next(indice for indice, texto in enumerate(paginas) if 'Detalle de eventos' in texto)
+        self.assertGreater(inicio_detalle, 1)
+        self.assertEqual([fila[0] for fila in tablas[0][1:]], [str(i) for i in range(1, 51)])
+        self.assertEqual([fila[4] for fila in tablas[0][1:]], ['-'] * 50)
 
     def test_metadatos_en_tres_columnas_ocupan_menos_altura(self):
         original = pdf.Table

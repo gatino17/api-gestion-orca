@@ -17,6 +17,7 @@ TINTA = colors.HexColor('#244361')
 ESTADOS = {'pendiente': 'Pendiente', 'en_proceso': 'En seguimiento', 'resuelto': 'Resuelto'}
 RESPONSABILIDADES = {'cliente': 'Cliente', 'orca': 'Orca', 'terceros': 'Terceros', 'por_determinar': 'Por determinar'}
 COLORES_ESTADO = {'pendiente': '#be123c', 'en_proceso': '#966000', 'resuelto': '#15803d'}
+CHILE = pytz.timezone('America/Santiago')
 
 
 def _texto(valor):
@@ -39,6 +40,14 @@ def _descripcion_resumen(valor):
     return texto[:177].rsplit(' ', 1)[0] + '...'
 
 
+def _hora_creacion(valor):
+    if not isinstance(valor, datetime):
+        return '-'
+    # Las fechas sin zona se interpretan como UTC; las nuevas conservan su zona.
+    instante = pytz.UTC.localize(valor) if valor.tzinfo is None else valor
+    return instante.astimezone(CHILE).strftime('%H:%M')
+
+
 def generar_registros_soporte_pdf(registros, filtros):
     """Exporta registros consultados en el servidor, sin recibir detalles del navegador."""
     archivo = BytesIO()
@@ -54,7 +63,7 @@ def generar_registros_soporte_pdf(registros, filtros):
                             leading=22, textColor=AZUL, spaceAfter=9)
     caso = ParagraphStyle('SoporteCaso', parent=cuerpo, fontName='Helvetica-Bold', fontSize=11,
                           leading=15, textColor=AZUL, spaceBefore=8, spaceAfter=5)
-    generado = datetime.now(pytz.timezone('America/Santiago')).strftime('%d/%m/%Y %H:%M')
+    generado = datetime.now(CHILE).strftime('%d/%m/%Y %H:%M')
     fecha_informe = ParagraphStyle('SoporteFecha', parent=pequeno, textColor=colors.HexColor('#647c92'), spaceAfter=10)
     historia = [Paragraph('Registros de soporte', titulo), Paragraph(f'Fecha: {generado} - Hora de Chile', fecha_informe)]
     estados = Counter(str(item.get('estado') or 'pendiente').lower() for item in registros)
@@ -69,23 +78,26 @@ def generar_registros_soporte_pdf(registros, filtros):
     historia.extend([Paragraph('Incluye todos los resultados filtrados, no solo la pagina visible.', pequeno), Spacer(1, 5 * mm)])
 
     historia.append(Paragraph('Resumen de eventos', caso))
-    historia.extend([Paragraph('Descripcion abreviada. El problema y la solucion completos se presentan en las paginas de detalle.', pequeno), Spacer(1, 3 * mm)])
+    historia.extend([Paragraph('Descripcion abreviada. El texto completo se presenta en las paginas de detalle. '
+                              'Hora: creacion del registro en horario de Chile.', pequeno), Spacer(1, 3 * mm)])
     filas_resumen = [[Paragraph(nombre, cabecera_resumen) for nombre in
-                      ('Caso', 'Centro / cliente', 'Fecha', 'Estado', 'Descripcion')]]
-    for registro in registros:
+                      ('N', 'Caso', 'Centro / cliente', 'Fecha', 'Hora', 'Estado', 'Descripcion')]]
+    for indice, registro in enumerate(registros, 1):
         referencia = f'<b>#{registro["id_soporte"]}</b>'
         if registro.get('case_code'):
             referencia += '<br/>' + _texto(registro['case_code'])
         estado = str(registro.get('estado') or 'pendiente').lower()
         color = COLORES_ESTADO.get(estado, '#52677d')
         filas_resumen.append([
+            Paragraph(str(indice), resumen),
             Paragraph(referencia, resumen),
             Paragraph('<b>' + _texto(registro.get('centro') or '-') + '</b><br/>' + _texto(registro.get('cliente') or '-'), resumen),
             Paragraph(_fecha(registro.get('fecha_soporte')), resumen),
+            Paragraph(_hora_creacion(registro.get('created_at')), resumen),
             Paragraph(f'<font color="{color}"><b>{_texto(ESTADOS.get(estado, estado))}</b></font>', resumen),
             Paragraph(_texto(_descripcion_resumen(registro.get('problema'))), resumen),
         ])
-    tabla_resumen = LongTable(filas_resumen, colWidths=[31 * mm, 42 * mm, 20 * mm, 22 * mm, 61 * mm],
+    tabla_resumen = LongTable(filas_resumen, colWidths=[9 * mm, 30 * mm, 35 * mm, 20 * mm, 15 * mm, 20 * mm, 47 * mm],
                              repeatRows=1, hAlign='LEFT')
     tabla_resumen.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), AZUL),
@@ -94,6 +106,7 @@ def generar_registros_soporte_pdf(registros, filtros):
         ('VALIGN', (0, 0), (-1, -1), 'TOP'),
         ('LEFTPADDING', (0, 0), (-1, -1), 6), ('RIGHTPADDING', (0, 0), (-1, -1), 6),
         ('TOPPADDING', (0, 0), (-1, -1), 6), ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+        ('LEFTPADDING', (0, 0), (0, -1), 3), ('RIGHTPADDING', (0, 0), (0, -1), 3),
     ]))
     historia.extend([tabla_resumen, PageBreak(), Paragraph('Detalle de eventos', titulo)])
 
@@ -121,7 +134,8 @@ def generar_registros_soporte_pdf(registros, filtros):
         color = COLORES_ESTADO.get(estado, '#52677d')
         historia.append(Paragraph(f'<font color="{color}"><b>{_texto(ESTADOS.get(estado, estado))}</b></font>', cuerpo))
         campos = [('Centro', registro.get('centro')), ('Cliente', registro.get('cliente')),
-                  ('Fecha del evento', _fecha(registro.get('fecha_soporte'))), ('Fecha de cierre', _fecha(registro.get('fecha_cierre'))),
+                  ('Fecha del evento', _fecha(registro.get('fecha_soporte'))), ('Hora de creacion', _hora_creacion(registro.get('created_at'))),
+                  ('Fecha de cierre', _fecha(registro.get('fecha_cierre'))),
                   ('Tipo', str(registro.get('tipo') or '-').capitalize()), ('Prioridad', str(registro.get('prioridad') or 'media').capitalize())]
         creador = registro.get('creado_por_nombre')
         if creador and str(creador).strip().lower() != 'sin registro':

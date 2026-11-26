@@ -443,15 +443,19 @@ class SoporteSchemaTest(unittest.TestCase):
             schema.ensure_soporte_schema(engine)
             self.assertIn('sugerencia', {item['name'] for item in inspect(engine).get_columns('soporte')})
             self.assertIn('responsabilidad_falla', {item['name'] for item in inspect(engine).get_columns('soporte')})
+            self.assertIn('created_at', {item['name'] for item in inspect(engine).get_columns('soporte')})
             self.assertTrue(inspect(engine).has_table('soporte_avisos_terreno'))
             with engine.connect() as connection:
                 self.assertEqual(tuple(connection.execute(text('SELECT problema, sugerencia FROM soporte')).one()), ('Problema anterior', None))
                 self.assertEqual(connection.execute(text('SELECT responsabilidad_falla FROM soporte')).scalar_one(), 'por_determinar')
+                self.assertIsNone(connection.execute(text('SELECT created_at FROM soporte')).scalar_one())
+                connection.execute(text("UPDATE soporte SET created_at = '2026-10-01 12:30:00'"))
                 connection.execute(text("UPDATE soporte SET responsabilidad_falla = 'terceros'"))
                 connection.commit()
             schema.ensure_soporte_schema(engine)
             with engine.connect() as connection:
                 self.assertEqual(connection.execute(text('SELECT responsabilidad_falla FROM soporte')).scalar_one(), 'terceros')
+                self.assertEqual(connection.execute(text('SELECT created_at FROM soporte')).scalar_one(), '2026-10-01 12:30:00')
                 connection.execute(text("INSERT INTO soporte (id_soporte, problema) VALUES (2, 'Ingreso sin responsabilidad')"))
                 self.assertEqual(connection.execute(text('SELECT responsabilidad_falla FROM soporte WHERE id_soporte = 2')).scalar_one(), 'por_determinar')
         finally:
