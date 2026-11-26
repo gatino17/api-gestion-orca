@@ -221,6 +221,56 @@ def exportar_responsabilidad_excel():
     return respuesta
 
 
+@soporte_blueprint.route('/registros/pdf', methods=['POST'])
+def exportar_registros_pdf():
+    usuario = _usuario_autenticado()
+    if not usuario:
+        return jsonify(error='Sesion invalida o expirada.'), 401
+    if str(usuario.rol or '').strip().lower() != 'admin':
+        return jsonify(error='Solo un administrador puede exportar los registros de soporte.'), 403
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify(error='Indica los registros que deseas exportar.'), 400
+    ids = data.get('ids')
+    if not isinstance(ids, list) or not ids or len(ids) > 5000 or any(type(item) is not int or item < 1 or item > 2147483647 for item in ids):
+        return jsonify(error='Selecciona entre 1 y 5000 registros validos. Acota la busqueda si es necesario.'), 400
+    if len(set(ids)) != len(ids):
+        return jsonify(error='Los registros no pueden repetirse.'), 400
+    filtros = data.get('filtros', {})
+    permitidos = {'busqueda', 'periodo', 'desde', 'hasta', 'periodo_desde', 'periodo_hasta'}
+    if not isinstance(filtros, dict) or set(filtros) - permitidos or any(not isinstance(valor, str) or len(valor) > 500 for valor in filtros.values()):
+        return jsonify(error='Los filtros del informe no son validos.'), 400
+    try:
+        fechas = {campo: _parse_date(filtros.get(campo)) for campo in ('desde', 'hasta', 'periodo_desde', 'periodo_hasta')}
+        for inicio, fin in [('desde', 'hasta'), ('periodo_desde', 'periodo_hasta')]:
+            if fechas[inicio] and fechas[fin] and fechas[inicio] > fechas[fin]:
+                raise ValueError
+    except (ValueError, TypeError):
+        return jsonify(error='Revisa el rango de fechas del informe.'), 400
+    # Se reciben solo identificadores de la tabla filtrada: los detalles y el creador
+    # siempre se consultan en la base de datos y se incluyen todas las paginas.
+    consulta = Soporte.query.options(joinedload(Soporte.centro).joinedload(Centro.cliente)).filter(Soporte.id_soporte.in_(ids))
+    por_id = {item.id_soporte: item for item in consulta.all()}
+    if len(por_id) != len(ids):
+        return jsonify(error='Los registros cambiaron. Actualiza la tabla y vuelve a exportar.'), 409
+    campos = ('id_soporte', 'case_code', 'fecha_soporte', 'fecha_cierre', 'creado_por_nombre', 'tipo', 'prioridad',
+              'estado', 'problema', 'solucion', 'sugerencia', 'origen', 'responsabilidad_falla', 'categoria_falla',
+              'subcategoria_falla', 'permiso_trabajo', 'cambio_equipo', 'equipo_cambiado')
+    registros = [{**{campo: getattr(por_id[sid], campo) for campo in campos},
+                  'centro': por_id[sid].centro.nombre if por_id[sid].centro else None,
+                  'cliente': por_id[sid].centro.cliente.nombre if por_id[sid].centro and por_id[sid].centro.cliente else None} for sid in ids]
+    try:
+        from ..soporte_pdf import generar_registros_soporte_pdf
+        archivo = generar_registros_soporte_pdf(registros, filtros)
+    except Exception:
+        current_app.logger.exception('No se pudo generar el PDF de registros de soporte.')
+        return jsonify(error='No se pudo generar el PDF. Solicita revisar el registro del backend.'), 500
+    respuesta = send_file(archivo, mimetype='application/pdf', as_attachment=True, download_name='Registros-soporte.pdf', max_age=0)
+    respuesta.headers['Cache-Control'] = 'private, no-store'
+    respuesta.headers['X-Content-Type-Options'] = 'nosniff'
+    return respuesta
+
+
 # Listar todos los registros de soporte
 @soporte_blueprint.route('/', methods=['GET'])
 def obtener_soportes():
