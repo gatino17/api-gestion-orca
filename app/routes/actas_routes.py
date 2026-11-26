@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, current_app, request, jsonify, send_file
 from sqlalchemy import and_, literal, func, case
 from ..mantencion_intervenciones import intervenciones_por_centro
 from .levantamientos_routes import crear_levantamiento_logic, actualizar_levantamiento_logic, eliminar_levantamiento_logic, obtener_levantamientos_logic
@@ -28,6 +28,49 @@ from ..models import (
 # Declarar la URL base
 
 actas_blueprint = Blueprint('actas', __name__)
+
+@actas_blueprint.route('/actividades/excel', methods=['GET'])
+def exportar_actividades_excel():
+    import jwt
+    from .auth_routes import SECRET_KEY
+    from ..models import User
+    from ..permissions import get_pages_for_role_name
+
+    try:
+        authorization = request.headers.get('Authorization', '')
+        if not authorization.startswith('Bearer '):
+            return jsonify(error='Debes iniciar sesion para descargar el Excel.'), 401
+        payload = jwt.decode(authorization[7:], SECRET_KEY, algorithms=['HS256'])
+        usuario = db.session.get(User, payload.get('user_id'))
+    except (jwt.InvalidTokenError, TypeError, ValueError):
+        return jsonify(error='Sesion invalida o expirada.'), 401
+    if not usuario:
+        return jsonify(error='Sesion invalida o expirada.'), 401
+    if 'registrosdocumentos' not in get_pages_for_role_name(usuario.rol):
+        return jsonify(error='No tienes permiso para exportar los registros de documentos.'), 403
+    cliente_id = request.args.get('cliente_id', '')
+    if cliente_id and (len(cliente_id) > 10 or not cliente_id.isdigit() or not 1 <= int(cliente_id) <= 2147483647):
+        return jsonify(error='Selecciona un cliente valido.'), 400
+    if len(request.args.get('nombre_centro', '')) > 200:
+        return jsonify(error='El filtro de centro es demasiado largo.'), 400
+    try:
+        respuesta, estado = listar_actas()
+        if estado != 200:
+            raise RuntimeError('No fue posible consultar las actividades para exportar.')
+        actividades = respuesta.get_json()['actividades']
+        if not actividades:
+            return jsonify(error='No hay actividades para los filtros seleccionados.'), 404
+        from ..actividades_excel import generar_actividades_excel
+        archivo = generar_actividades_excel(actividades)
+    except Exception:
+        current_app.logger.exception('No se pudo generar el Excel de actividades.')
+        return jsonify(error='No se pudo generar el Excel. Intenta nuevamente.'), 500
+    respuesta = send_file(archivo, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                          as_attachment=True, download_name='Actividades-documentos.xlsx', max_age=0)
+    respuesta.headers['Cache-Control'] = 'private, no-store'
+    respuesta.headers['X-Content-Type-Options'] = 'nosniff'
+    return respuesta
+
 
 @actas_blueprint.route('/listar', methods=['GET'])
 def listar_actas():
