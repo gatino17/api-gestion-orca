@@ -127,7 +127,7 @@ def listar_actas():
             Levantamiento.id_levantamiento.label("id_levantamiento"),  # Aquí agregas el ID
             case(
                 (Levantamiento.documento_asociado.is_not(None),
-                 func.concat("http://localhost:5000/api/filtro/documento/Levantamientos/", Levantamiento.id_levantamiento)),
+                 func.concat(request.url_root.rstrip('/') + "/api/filtro/documento/Levantamientos/", Levantamiento.id_levantamiento)),
                 else_=None
             ).label("documento_levantamiento"),
             Levantamiento.fecha_levantamiento.label("fecha_levantamiento")
@@ -369,6 +369,15 @@ def editar_acta(id):
     
 
 # Endpoint para crear un levantamiento
+@actas_blueprint.route('/levantamientos', methods=['GET'])
+def listar_levantamientos_desde_actas():
+    centro_id = request.args.get('centro_id', type=int)
+    if 'centro_id' in request.args and (centro_id is None or centro_id <= 0):
+        return jsonify(error='Selecciona un centro valido.'), 400
+    response, status_code = obtener_levantamientos_logic(centro_id)
+    return jsonify(response), status_code
+
+
 @actas_blueprint.route('/levantamientos', methods=['POST'])
 def crear_levantamiento_desde_actas():
     try:

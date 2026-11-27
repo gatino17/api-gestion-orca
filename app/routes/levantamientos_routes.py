@@ -1,4 +1,6 @@
 import os
+from pathlib import Path
+from uuid import uuid4
 from flask import Blueprint, request, jsonify, send_file
 from datetime import datetime
 from werkzeug.utils import secure_filename
@@ -8,7 +10,8 @@ from ..models import Levantamiento, Centro, db
 levantamientos_blueprint = Blueprint('levantamientos', __name__)
 
 # Configuración para archivos
-ALLOWED_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.pdf'}
+ALLOWED_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.pdf', '.ppt', '.pptx'}
+MAX_DOCUMENTO_BYTES = 25 * 1024 * 1024
 UPLOAD_FOLDER = os.path.join(os.getcwd(), 'uploads/levantamientos_docs')
 
 # Crear el directorio de uploads si no existe
@@ -17,6 +20,38 @@ if not os.path.exists(UPLOAD_FOLDER):
 
 def is_allowed_file(filename):
     return '.' in filename and os.path.splitext(filename)[1].lower() in ALLOWED_EXTENSIONS
+
+
+def _guardar_documento(file):
+    if not is_allowed_file(file.filename):
+        raise ValueError('Adjunta un PowerPoint (.ppt o .pptx), PDF, JPG o PNG.')
+    contenido = file.stream.read(MAX_DOCUMENTO_BYTES + 1)
+    if not contenido or len(contenido) > MAX_DOCUMENTO_BYTES:
+        raise ValueError('El documento debe tener contenido y pesar como maximo 25 MB.')
+    nombre = secure_filename(file.filename)
+    base, extension = os.path.splitext(nombre)
+    nombre = '{}_{}{}'.format(uuid4().hex, base[:170], extension)
+    ruta = Path(UPLOAD_FOLDER) / nombre
+    ruta.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        ruta.write_bytes(contenido)
+    except Exception:
+        ruta.unlink(missing_ok=True)
+        raise
+    return 'levantamientos_docs/' + nombre, ruta
+
+
+def _limpiar_anterior(documento):
+    if not documento or not documento.startswith('levantamientos_docs/'):
+        return
+    carpeta = Path(UPLOAD_FOLDER).resolve()
+    ruta = (carpeta / Path(documento).name).resolve()
+    if ruta.parent == carpeta:
+        try:
+            ruta.unlink(missing_ok=True)
+        except OSError:
+            # El registro ya se confirmo: un fallo de limpieza no invalida el guardado.
+            pass
 
 # Obtener todos los levantamientos o filtrar por centro_id
 @levantamientos_blueprint.route('/', methods=['GET'])
@@ -44,6 +79,7 @@ def get_levantamientos():
 # Crear un nuevo levantamiento
 #@levantamientos_blueprint.route('/', methods=['POST'])
 def crear_levantamiento_logic(data, file):
+    nuevo_archivo = None
     try:
         # Validar centro_id
         centro_id = data.get('centro_id')
@@ -58,10 +94,8 @@ def crear_levantamiento_logic(data, file):
 
         # Guardar el archivo si está presente
         documento_path = None
-        if file and is_allowed_file(file.filename):
-            filename = f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{secure_filename(file.filename)}"
-            documento_path = f"levantamientos_docs/{filename}"
-            file.save(os.path.join(UPLOAD_FOLDER, filename))
+        if file:
+            documento_path, nuevo_archivo = _guardar_documento(file)
 
         # Crear el levantamiento
         nuevo_levantamiento = Levantamiento(
@@ -75,6 +109,8 @@ def crear_levantamiento_logic(data, file):
         return {"message": "Levantamiento creado exitosamente", "id_levantamiento": nuevo_levantamiento.id_levantamiento}, 201
     except Exception as e:
         db.session.rollback()
+        if nuevo_archivo:
+            nuevo_archivo.unlink(missing_ok=True)
         return {"error": str(e)}, 400
 
 
@@ -122,8 +158,12 @@ def descargar_documento_levantamiento(id_levantamiento):
 # Actualizar un levantamiento
 #@levantamientos_blueprint.route('/<int:id_levantamiento>', methods=['PUT'])
 def actualizar_levantamiento_logic(id_levantamiento, data, file):
+    nuevo_archivo = None
+    archivo_anterior = None
     try:
-        levantamiento = Levantamiento.query.get_or_404(id_levantamiento)
+        levantamiento = db.session.get(Levantamiento, id_levantamiento)
+        if not levantamiento:
+            return {"error": "Levantamiento no encontrado"}, 404
 
         # Actualizar campos
         if data.get('centro_id'):
@@ -136,23 +176,20 @@ def actualizar_levantamiento_logic(id_levantamiento, data, file):
             levantamiento.fecha_levantamiento = datetime.strptime(data.get('fecha_levantamiento'), '%Y-%m-%d').date()
 
         # Reemplazar el archivo si se sube uno nuevo
-        if file and is_allowed_file(file.filename):
-            if levantamiento.documento_asociado:
-                existing_file_path = os.path.join(os.getcwd(), 'uploads', levantamiento.documento_asociado.replace('/', os.sep))
-                if os.path.exists(existing_file_path):
-                    os.remove(existing_file_path)
-
-            filename = f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{secure_filename(file.filename)}"
-            relative_path = f"levantamientos_docs/{filename}"
-            absolute_path = os.path.join(UPLOAD_FOLDER, filename)
-            file.save(absolute_path)
-            levantamiento.documento_asociado = relative_path
+        if file:
+            documento_path, nuevo_archivo = _guardar_documento(file)
+            archivo_anterior = levantamiento.documento_asociado
+            levantamiento.documento_asociado = documento_path
 
         db.session.commit()
-        return {"message": "Levantamiento actualizado exitosamente"}, 200
     except Exception as e:
         db.session.rollback()
+        if nuevo_archivo:
+            nuevo_archivo.unlink(missing_ok=True)
         return {"error": str(e)}, 400
+    if nuevo_archivo:
+        _limpiar_anterior(archivo_anterior)
+    return {"message": "Levantamiento actualizado exitosamente"}, 200
 
 # Eliminar un levantamiento
 #@levantamientos_blueprint.route('/<int:id_levantamiento>', methods=['DELETE'])

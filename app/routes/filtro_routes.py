@@ -258,7 +258,8 @@ def descargar_documento(tipo, id):
         mimetype = guess_type(str(documento_path))[0] or "application/octet-stream"
 
         # Enviar el archivo como respuesta
-        return send_file(documento_path, mimetype=mimetype, as_attachment=False)
+        es_powerpoint = tipo == 'Levantamientos' and documento_path.suffix.lower() in ('.ppt', '.pptx')
+        return send_file(documento_path, mimetype=mimetype, as_attachment=es_powerpoint)
     except Exception as e:
         return jsonify({"error": f"Error al servir el documento: {str(e)}"}), 500
 
