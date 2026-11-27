@@ -104,12 +104,21 @@ class ActividadesExcelTest(unittest.TestCase):
         self.assertEqual(hoja['F9'].fill.fgColor.rgb, '00' + excel.VERDE)
         self.assertIn('Documento: Sin registro', hoja['J8'].value)
         self.assertEqual(hoja['J8'].fill.fgColor.rgb, '00' + excel.ROJO)
-        self.assertIn('20/11/2026', libro['Cliente B']['H8'].value)
+        self.assertIn('20/11/2026', libro['Cliente B']['G8'].value)
         self.assertEqual(hoja.freeze_panes, 'C8')
         self.assertEqual(hoja.auto_filter.ref, 'A7:J9')
         self.assertEqual(hoja.max_column, 10)
         self.assertIn('attachment', response.headers['Content-Disposition'])
         self.assertEqual(response.headers['Cache-Control'], 'private, no-store')
+
+    def test_cese_precede_a_traslado_sin_intercambiar_sus_datos(self):
+        hoja = load_workbook(excel.generar_actividades_excel([dict(id_centro=1, nombre_cliente='Cliente',
+            cese_fecha='2026-11-24', cese_documento='cese.pdf',
+            traslado_fecha='2026-11-25', traslado_documento='traslado.pdf')])).active
+        self.assertEqual(hoja['G7'].value, 'Cese')
+        self.assertEqual(hoja['H7'].value, 'Traslado')
+        self.assertIn('24/11/2026', hoja['G8'].value)
+        self.assertIn('25/11/2026', hoja['H8'].value)
 
     def test_filtros_de_cliente_y_centro_se_aplican_juntos(self):
         libro = self.libro(self.descargar('?cliente_id=1&nombre_centro=norte'))

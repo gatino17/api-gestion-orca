@@ -15,7 +15,7 @@ AZUL = '1263AA'
 VERDE = 'DCFCE7'
 ROJO = 'FEE2E2'
 AMARILLO = 'FEF3C7'
-COLUMNAS = ('Centro', 'Estado', 'Ubicacion', 'Mantenciones', 'Levantamiento', 'Instalacion', 'Traslado', 'Cese', 'Retiro', 'Inventario')
+COLUMNAS = ('Centro', 'Estado', 'Ubicacion', 'Mantenciones', 'Levantamiento', 'Instalacion', 'Cese', 'Traslado', 'Retiro', 'Inventario')
 DIAS = ('lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado', 'domingo')
 
 
@@ -153,7 +153,7 @@ def generar_actividades_excel(actividades):
                       (registro.get('estado') or 'Sin estado', None),
                       (f'{registro.get("area") or "Sin dato"}\n{registro.get("ubicacion") or "Sin dato"}', None),
                       _mantenciones(registro), _documento(registro, 'levantamiento'), _instalacion(registro),
-                      _documento(registro, 'traslado'), _documento(registro, 'cese', fecha_cese),
+                      _documento(registro, 'cese', fecha_cese), _documento(registro, 'traslado'),
                       _documento(registro, 'retiro'), _documento(registro, 'inventario')]
             for columna, (valor, color) in enumerate(celdas, 1):
                 celda = hoja.cell(fila, columna)
