@@ -129,6 +129,10 @@ def obtener_levantamientos_logic(centro_id=None):
                 "documento_asociado": l.documento_asociado,
             } for l in levantamientos
         ]
+        from ..levantamientos_armado import respaldos_por_centro
+        centros = [centro_id] if centro_id else None
+        for respaldos in respaldos_por_centro(centros).values():
+            levantamientos_data.extend(respaldos)
         return levantamientos_data, 200
     except Exception as e:
         return {"error": str(e)}, 400

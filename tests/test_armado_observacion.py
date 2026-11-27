@@ -22,6 +22,7 @@ for name, folder in [(NS, ROOT), (NS + '.routes', ROOT / 'routes')]:
     sys.modules[name] = package
 socket = types.ModuleType(NS + '.socketio_ext')
 socket.emit_armado_event, socket.emit_actividad_event = Mock(), Mock()
+socket.emit_inventario_event = Mock()
 sys.modules[socket.__name__] = socket
 models = importlib.import_module(NS + '.models')
 db = importlib.import_module(NS + '.database').db
@@ -29,6 +30,9 @@ routes = importlib.import_module(NS + '.routes.armado_observacion_routes')
 armados = importlib.import_module(NS + '.routes.armados_routes')
 TEST_KEY = 'armado-observacion-solo-pruebas'
 armados.SECRET_KEY = TEST_KEY
+actas = importlib.import_module(NS + '.routes.actas_routes')
+historial = importlib.import_module(NS + '.routes.consultascentro_historial_routes')
+excel = importlib.import_module(NS + '.actividades_excel')
 
 
 def imagen(nombre='foto.png'):
@@ -46,6 +50,8 @@ class ArmadoObservacionTest(unittest.TestCase):
         db.init_app(cls.app)
         cls.app.register_blueprint(routes.armado_observacion_blueprint, url_prefix='/armados')
         cls.app.register_blueprint(armados.armados_blueprint, url_prefix='/armados')
+        cls.app.register_blueprint(actas.actas_blueprint, url_prefix='/api/actas')
+        cls.app.register_blueprint(historial.consultascentro_historial_bp, url_prefix='/api/consultas_centro')
 
     def setUp(self):
         self.context = self.app.app_context()
@@ -54,7 +60,7 @@ class ArmadoObservacionTest(unittest.TestCase):
         self.app.config['ARMADO_OBSERVACIONES_UPLOAD_FOLDER'] = self.folder.name
         db.create_all()
         db.session.add_all([models.User(id=i, name=role, rol=role, email=role + '@example.test', password_hash='test')
-                            for i, role in [(1, 'admin'), (2, 'tecnico'), (3, 'finanzas'), (4, 'inventario')]])
+                            for i, role in [(1, 'admin'), (2, 'tecnico'), (3, 'finanzas'), (4, 'inventario'), (5, 'sin_acceso')]])
         role = models.Role(nombre='inventario')
         db.session.add(role)
         db.session.flush()
@@ -94,6 +100,86 @@ class ArmadoObservacionTest(unittest.TestCase):
         self.assertEqual(self.listado()['imagenes'], [])
         self.assertEqual(db.session.get(models.Armado, 1).estado, 'en_proceso')
         socket.emit_armado_event.assert_called_once()
+
+    def pdf(self):
+        from pypdf import PdfWriter
+        salida = io.BytesIO()
+        writer = PdfWriter()
+        writer.add_blank_page(width=100, height=100)
+        writer.write(salida)
+        salida.seek(0)
+        return salida, 'Plano.PDF'
+
+    def test_guarda_pdf_e_imagen_con_titulo_y_abre_cada_tipo_correctamente(self):
+        response = self.guardar({'imagen_1': self.pdf(), 'titulo_1': 'Plano del sistema', 'imagen_2': imagen()})
+        self.assertEqual(response.status_code, 200, response.get_json())
+        docs = response.get_json()['imagenes']
+        self.assertEqual([d['tipo'] for d in docs], ['pdf', 'imagen'])
+        self.assertEqual(docs[0]['nombre'], 'Plano del sistema')
+        for doc, mime in zip(docs, ('application/pdf', 'image/jpeg')):
+            response = self.client.get(f"/armados/1/observacion/imagenes/{doc['id_imagen']}", headers=self.headers())
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.mimetype, mime)
+            response.close()
+
+    def test_pdf_falso_no_guarda_texto_ni_adjuntos_parcialmente(self):
+        response = self.guardar({'observacion': 'No guardar', 'imagen_1': imagen(),
+                                 'imagen_2': (io.BytesIO(b'<html>falso</html>'), 'falso.pdf')})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(self.listado()['observacion'], 'Original')
+        self.assertEqual(self.archivos(), [])
+
+    def test_respaldos_aparecen_en_levantamientos_historial_y_tabla_sin_duplicarse(self):
+        self.guardar({'imagen_1': self.pdf(), 'titulo_1': 'Plano compartido', 'imagen_2': imagen()})
+        url = '/api/actas/levantamientos?centro_id=1'
+        docs = self.client.get(url, headers=self.headers()).get_json()
+        self.assertEqual(len(docs), 2)
+        self.assertTrue(all(d['origen'] == 'armado' and d['solo_lectura'] for d in docs))
+        self.assertEqual(models.Levantamiento.query.count(), 0)
+        self.assertEqual(len(self.archivos()), 2)
+        data = self.client.get('/api/consultas_centro/centro_historial/1', headers=self.headers()).get_json()
+        self.assertEqual(data['historial']['levantamientos'], docs)
+        connection = db.engine.raw_connection()
+        connection.create_function('concat', -1, lambda *args: ''.join(str(arg) for arg in args if arg is not None))
+        connection.close()
+        with patch('builtins.print'):
+            response = self.client.get('/api/actas/listar', headers=self.headers())
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()['actividades'][0]['levantamiento_respaldos'], docs)
+        # Editar el titulo y eliminar un respaldo se refleja sin sincronizar copias.
+        self.guardar({'titulo_1': 'Plano actualizado', 'eliminar_2': 'true'})
+        nuevos = self.client.get(url, headers=self.headers()).get_json()
+        self.assertEqual(len(nuevos), 1)
+        self.assertEqual(nuevos[0]['nombre'], 'Plano actualizado')
+        self.assertEqual(models.Levantamiento.query.count(), 0)
+
+    def test_lectura_desde_consulta_no_otorga_permiso_para_editar_armado(self):
+        self.guardar({'imagen_1': self.pdf()})
+        docs = self.client.get('/api/actas/levantamientos?centro_id=1', headers=self.headers(2)).get_json()
+        self.assertEqual(len(docs), 1)
+        response = self.client.get(docs[0]['documento'], headers=self.headers(2))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.mimetype, 'application/pdf')
+        response.close()
+        self.assertEqual(self.guardar(uid=2).status_code, 403)
+        self.assertEqual(self.client.get('/api/actas/levantamientos?centro_id=1').get_json(), [])
+        self.assertEqual(self.client.get(docs[0]['documento']).status_code, 401)
+        self.assertEqual(self.client.get(docs[0]['documento'], headers=self.headers(5)).status_code, 403)
+
+    def test_no_mezcla_centros_y_elimina_respaldo_al_eliminar_armado(self):
+        self.guardar({'imagen_1': self.pdf()})
+        self.assertEqual(self.client.get('/api/actas/levantamientos?centro_id=999', headers=self.headers()).get_json(), [])
+        self.client.delete('/armados/1', headers=self.headers())
+        self.assertEqual(self.client.get('/api/actas/levantamientos?centro_id=1', headers=self.headers()).get_json(), [])
+
+    def test_excel_reconoce_respaldo_de_armado_sin_documento_manual(self):
+        self.guardar({'imagen_1': self.pdf(), 'titulo_1': 'Plano compartido'})
+        from openpyxl import load_workbook
+        docs = self.client.get('/api/actas/levantamientos?centro_id=1', headers=self.headers()).get_json()
+        hoja = load_workbook(excel.generar_actividades_excel([{'id_centro': 1, 'nombre_cliente': 'Cliente', 'levantamiento_respaldos': docs}])).active
+        self.assertIn('Respaldos de armado: 1', hoja['E8'].value)
+        self.assertIn('Plano compartido', hoja['E8'].value)
+        self.assertEqual(hoja['E8'].fill.fgColor.rgb, '00' + excel.VERDE)
 
     def test_guarda_dos_imagenes_y_las_recupera_al_reabrir(self):
         response = self.guardar({'observacion': 'Respaldo del rack', 'imagen_1': imagen(), 'imagen_2': imagen('segunda.png')})

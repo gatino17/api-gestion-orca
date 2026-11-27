@@ -35,7 +35,7 @@ def _directorio():
 
 
 def _ruta(nombre):
-    if not re.fullmatch(r'[a-f0-9]{32}\.jpg', nombre):
+    if not re.fullmatch(r'[a-f0-9]{32}\.(?:jpg|pdf)', nombre):
         raise ValueError('Archivo invalido.')
     directorio = _directorio()
     ruta = (directorio / nombre).resolve()
@@ -56,7 +56,26 @@ def limpiar_archivos_observacion(nombres):
 def _serializar(armado):
     imagenes = ArmadoObservacionImagen.query.filter_by(armado_id=armado.id_armado).order_by(ArmadoObservacionImagen.posicion).all()
     return dict(id_armado=armado.id_armado, observacion=armado.observacion or '',
-                imagenes=[dict(id_imagen=i.id_imagen, posicion=i.posicion, nombre=i.nombre) for i in imagenes])
+                imagenes=[dict(id_imagen=i.id_imagen, posicion=i.posicion, nombre=i.nombre,
+                               tipo='pdf' if i.archivo.endswith('.pdf') else 'imagen') for i in imagenes])
+
+
+def _normalizar_adjunto(file):
+    if Path(file.filename).suffix.lower() != '.pdf':
+        return _normalizar_imagen(file), secure_filename(file.filename)[:200] or 'Imagen.jpg', '.jpg'
+    contenido = file.stream.read(MAX_IMAGEN + 1)
+    if len(contenido) > MAX_IMAGEN:
+        raise ValueError('Cada archivo puede pesar hasta 5 MB.')
+    try:
+        from pypdf import PdfReader
+        if not contenido.startswith(b'%PDF-'):
+            raise ValueError()
+        lector = PdfReader(io.BytesIO(contenido))
+        if lector.is_encrypted or not len(lector.pages):
+            raise ValueError()
+    except Exception:
+        raise ValueError('Adjunta un PDF valido, con paginas y sin contrasena.') from None
+    return contenido, secure_filename(file.filename)[:200] or 'Documento.pdf', '.pdf'
 
 
 def _normalizar_imagen(file):
@@ -98,7 +117,7 @@ def observacion(armado_id):
     if request.method == 'GET':
         return jsonify(_serializar(armado))
     if request.content_length and request.content_length > 12 * 1024 * 1024:
-        return jsonify(message='El adjunto es demasiado grande. Usa hasta dos imagenes de 5 MB cada una.'), 413
+        return jsonify(message='El adjunto es demasiado grande. Usa hasta dos archivos de 5 MB cada uno.'), 413
     nuevos, antiguos = [], []
     try:
         if request.mimetype != 'multipart/form-data':
@@ -124,7 +143,7 @@ def observacion(armado_id):
             if file and file.filename:
                 if quitar == 'true':
                     raise ValueError('No puedes quitar y reemplazar la misma imagen a la vez.')
-                cambios[posicion] = (_normalizar_imagen(file), secure_filename(file.filename)[:200] or 'Imagen.jpg')
+                cambios[posicion] = _normalizar_adjunto(file)
             elif quitar == 'true':
                 cambios[posicion] = None
         guardadas = {i.posicion: i for i in armado.imagenes_observacion}
@@ -141,7 +160,7 @@ def observacion(armado_id):
                 if imagen:
                     db.session.delete(imagen)
                 continue
-            archivo = uuid4().hex + '.jpg'
+            archivo = uuid4().hex + contenido[2]
             _directorio().mkdir(parents=True, exist_ok=True)
             nuevos.append(archivo)
             _ruta(archivo).write_bytes(contenido[0])
@@ -181,7 +200,30 @@ def imagen_observacion(armado_id, imagen_id):
         return jsonify(message='Imagen no disponible.'), 404
     if not ruta.is_file():
         return jsonify(message='Imagen no disponible.'), 404
-    response = send_file(ruta, mimetype='image/jpeg', download_name='observacion.jpg', etag=False, max_age=0)
+    response = send_file(ruta, mimetype='application/pdf' if ruta.suffix == '.pdf' else 'image/jpeg',
+                         download_name='observacion' + ruta.suffix, etag=False, max_age=0)
+    response.headers['Cache-Control'] = 'private, no-store'
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    return response
+
+
+def documento_levantamiento_armado(respaldo_id):
+    from ..levantamientos_armado import puede_consultar_respaldos
+    if not request.headers.get('Authorization', '').startswith('Bearer '):
+        return jsonify(message='Debes iniciar sesion.'), 401
+    if not puede_consultar_respaldos():
+        return jsonify(message='No tienes permiso para consultar este respaldo.'), 403
+    adjunto = db.session.get(ArmadoObservacionImagen, respaldo_id)
+    if not adjunto:
+        return jsonify(message='Respaldo no encontrado.'), 404
+    try:
+        ruta = _ruta(adjunto.archivo)
+    except ValueError:
+        return jsonify(message='Respaldo no disponible.'), 404
+    if not ruta.is_file():
+        return jsonify(message='El archivo no esta disponible en este servidor.'), 404
+    response = send_file(ruta, mimetype='application/pdf' if ruta.suffix == '.pdf' else 'image/jpeg',
+                         download_name='respaldo' + ruta.suffix, etag=False, max_age=0)
     response.headers['Cache-Control'] = 'private, no-store'
     response.headers['X-Content-Type-Options'] = 'nosniff'
     return response

@@ -233,6 +233,8 @@ def listar_actas():
         actividades_rows = actividades_query.all()
         intervenciones = intervenciones_por_centro([r.id_centro for r in actividades_rows])
 
+        from ..levantamientos_armado import respaldos_por_centro
+        respaldos_armado = respaldos_por_centro(row.id_centro for row in actividades_rows)
         actividades_result = []
         for row in actividades_rows:
             actividades_result.append({
@@ -252,6 +254,7 @@ def listar_actas():
                 "ultima_fecha_permiso_sistema": row.ultima_fecha_permiso_sistema,
                 "levantamiento_fecha": row.fecha_levantamiento,
                 "levantamiento_documento": row.documento_levantamiento,
+                "levantamiento_respaldos": respaldos_armado.get(row.id_centro, []),
                 "mantencion_fecha": row.fecha_mantencion,
                 "mantencion_documento": row.documento_mantencion,
                 "cantidad_mantenciones_sistema": int(row.cantidad_mantenciones_sistema or 0),
@@ -376,6 +379,12 @@ def listar_levantamientos_desde_actas():
         return jsonify(error='Selecciona un centro valido.'), 400
     response, status_code = obtener_levantamientos_logic(centro_id)
     return jsonify(response), status_code
+
+
+@actas_blueprint.route('/levantamientos/armado/<int:respaldo_id>/documento', methods=['GET'])
+def abrir_respaldo_levantamiento_armado(respaldo_id):
+    from .armado_observacion_routes import documento_levantamiento_armado
+    return documento_levantamiento_armado(respaldo_id)
 
 
 @actas_blueprint.route('/levantamientos', methods=['POST'])

@@ -90,9 +90,18 @@ def agrupar_actividades(actividades):
 
 
 def _documento(registro, campo, fecha=None):
-    disponible = bool(registro.get(campo + '_documento'))
+    respaldos = (registro.get('levantamiento_respaldos') or []) if campo == 'levantamiento' else []
+    disponible = bool(registro.get(campo + '_documento') or respaldos)
     valor_fecha = fecha if fecha is not None else registro.get(campo + '_fecha')
-    return f'Fecha: {_fecha_texto(valor_fecha)}\nDocumento: {"Disponible" if disponible else "Sin registro"}', VERDE if disponible else ROJO
+    etiqueta_fecha = 'Fecha'
+    if not valor_fecha and respaldos:
+        valor_fecha = respaldos[0].get('fecha_armado')
+        etiqueta_fecha = 'Fecha del armado'
+    texto = f'{etiqueta_fecha}: {_fecha_texto(valor_fecha)}\nDocumento: {"Disponible" if disponible else "Sin registro"}'
+    if respaldos:
+        texto += '\nRespaldos de armado: ' + str(len(respaldos))
+        texto += '\n' + '\n'.join(doc['nombre'] for doc in respaldos)
+    return texto, VERDE if disponible else ROJO
 
 
 def _mantenciones(registro):

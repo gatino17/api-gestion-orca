@@ -147,6 +147,8 @@ def obtener_historial_centro(centro_id):
             ]
         }
 
+        from ..levantamientos_armado import respaldos_por_centro
+        historial['levantamientos'].extend(respaldos_por_centro([centro_id]).get(centro_id, []))
         historial['intervenciones_mantencion'] = intervenciones_por_centro([centro_id])[centro_id]['items']
 
         # Datos IP
