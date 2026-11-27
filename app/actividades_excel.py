@@ -127,6 +127,8 @@ def _instalacion(registro):
     texto = (f'Manual: {"Documento disponible" if disponible else "Sin doc"} - {_fecha_texto(registro.get("instalacion_fecha") or registro.get("centro_fecha_instalacion"))}\n'
              f'Actas sistema: {actas} - {_fecha_texto(registro.get("ultima_fecha_acta_sistema"))}\n'
              f'Permisos sistema: {permisos} - {_fecha_texto(registro.get("ultima_fecha_permiso_sistema"))}')
+    if registro.get('cantidad_documentos_instalacion'):
+        texto += '\nDocumentos manuales: ' + str(registro['cantidad_documentos_instalacion'])
     return texto, VERDE if disponible or actas or permisos else ROJO
 
 

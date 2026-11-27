@@ -66,8 +66,9 @@ class InstalacionManualTest(unittest.TestCase):
         db.drop_all()
         self.context.pop()
 
-    def subir(self, nombre='acta.pdf', contenido=b'%PDF-1.4 prueba', centro='1', fecha='2026-11-25'):
+    def subir(self, nombre='acta.pdf', contenido=b'%PDF-1.4 prueba', centro='1', fecha='2026-11-25', **extra):
         data = {'centro_id': centro, 'fecha_instalacion': fecha, 'observacion': 'Sistema instalado'}
+        data.update(extra)
         if nombre is not None:
             data['documento_acta'] = (io.BytesIO(contenido), nombre)
         return self.client.post('/api/actas/instalaciones', data=data)
@@ -97,6 +98,57 @@ class InstalacionManualTest(unittest.TestCase):
         self.assertEqual(item.documento_acta, antes)
         self.assertEqual(item.fecha_instalacion, date(2026, 11, 24))
         self.assertTrue(Path(self.folder.name, 'uploads', antes).is_file())
+
+    def test_agrega_documentos_con_fecha_propia_sin_reemplazar_original(self):
+        primero = self.subir().get_json()['id_instalacion']
+        original = db.session.get(models.InstalacionNueva, primero).documento_acta
+        segundo = self.subir(fecha='2026-11-27', nuevo_documento='1').get_json()['id_instalacion']
+        self.assertNotEqual(primero, segundo)
+        self.assertEqual(models.InstalacionNueva.query.count(), 2)
+        self.assertEqual(db.session.get(models.InstalacionNueva, primero).documento_acta, original)
+        self.assertTrue(Path(self.folder.name, 'uploads', original).is_file())
+        self.assertEqual(db.session.get(models.Centro, 1).fecha_instalacion, date(2026, 11, 25))
+        listado = self.client.get('/api/instalaciones/?centro_id=1').get_json()
+        self.assertEqual({r['fecha_instalacion'] for r in listado}, {'2026-11-25', '2026-11-27'})
+        historial = self.client.get('/api/consultas_centro/centro_historial/1').get_json()['historial']['instalaciones']
+        self.assertEqual(len(historial), 2)
+        for item in historial:
+            response = self.client.get(item['documento'])
+            self.assertEqual(response.status_code, 200)
+            response.close()
+
+    def test_edita_solo_el_documento_seleccionado_y_su_fecha(self):
+        primero = self.subir().get_json()['id_instalacion']
+        segundo = self.subir(nuevo_documento='1').get_json()['id_instalacion']
+        anterior = db.session.get(models.InstalacionNueva, segundo).documento_acta
+        self.assertEqual(self.subir(id_instalacion=str(segundo), fecha='2026-11-28').status_code, 201)
+        self.assertEqual(db.session.get(models.InstalacionNueva, primero).fecha_instalacion, date(2026, 11, 25))
+        self.assertEqual(db.session.get(models.InstalacionNueva, segundo).fecha_instalacion, date(2026, 11, 28))
+        self.assertEqual(db.session.get(models.Centro, 1).fecha_instalacion, date(2026, 11, 25))
+        self.assertFalse(Path(self.folder.name, 'uploads', anterior).exists())
+        self.assertEqual(len(list(Path(routes.UPLOAD_FOLDER).iterdir())), 2)
+        actual = db.session.get(models.InstalacionNueva, segundo).documento_acta
+        self.assertEqual(self.subir(nombre=None, id_instalacion=str(segundo), observacion='Actualizado').status_code, 201)
+        self.assertEqual(db.session.get(models.InstalacionNueva, segundo).documento_acta, actual)
+        self.assertEqual(db.session.get(models.InstalacionNueva, segundo).observacion, 'Actualizado')
+
+    def test_no_edita_registros_de_otro_centro_ni_agrega_sin_documento(self):
+        registro = self.subir().get_json()['id_instalacion']
+        self.assertEqual(self.subir(centro='2', id_instalacion=str(registro)).status_code, 404)
+        self.assertEqual(self.subir(id_instalacion='999').status_code, 404)
+        self.assertEqual(self.subir(id_instalacion='invalido').status_code, 400)
+        self.assertEqual(self.subir(nombre=None, nuevo_documento='1').status_code, 400)
+        self.assertEqual(self.subir(id_instalacion=str(registro), nuevo_documento='1').status_code, 400)
+        self.assertEqual(models.InstalacionNueva.query.count(), 1)
+        self.assertEqual(len(list(Path(routes.UPLOAD_FOLDER).iterdir())), 1)
+
+    def test_error_al_agregar_no_afecta_documentos_anteriores(self):
+        self.subir()
+        original = models.InstalacionNueva.query.one().documento_acta
+        with patch.object(db.session, 'commit', side_effect=RuntimeError('Error de prueba')):
+            self.assertEqual(self.subir(nuevo_documento='1').status_code, 400)
+        self.assertEqual(models.InstalacionNueva.query.one().documento_acta, original)
+        self.assertEqual(len(list(Path(routes.UPLOAD_FOLDER).iterdir())), 1)
 
     def test_reemplazo_usa_nombre_unico_y_elimina_anterior_despues_de_confirmar(self):
         self.subir()

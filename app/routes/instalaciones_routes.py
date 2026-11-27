@@ -70,6 +70,23 @@ def crear_instalacion_logic(data, file):
         else:
             inicio_monitoreo = fecha_instalacion
 
+        principal = (InstalacionNueva.query.filter_by(centro_id=centro_id)
+                     .order_by(InstalacionNueva.id_instalacion.asc()).first())
+        nuevo_documento = str(data.get('nuevo_documento', '')).lower() in ('1', 'true')
+        registro_id = data.get('id_instalacion')
+        if nuevo_documento and registro_id:
+            return {"error": "Elige agregar un documento o editar uno existente."}, 400
+        if registro_id:
+            instalacion = InstalacionNueva.query.filter_by(
+                id_instalacion=int(registro_id), centro_id=centro_id).first()
+            if not instalacion:
+                return {"error": "El documento de instalacion no pertenece a este centro."}, 404
+        else:
+            # Los clientes anteriores conservan el guardado del registro principal.
+            instalacion = None if nuevo_documento else principal
+        if nuevo_documento and not file:
+            return {"error": "Adjunta el nuevo documento de instalacion."}, 400
+
         # Guardar el archivo si esta presente
         documento_path = None
         if file:
@@ -83,12 +100,6 @@ def crear_instalacion_logic(data, file):
             nuevo_archivo = Path(UPLOAD_FOLDER) / filename
             nuevo_archivo.parent.mkdir(parents=True, exist_ok=True)
             nuevo_archivo.write_bytes(contenido)
-
-        instalacion = (
-            InstalacionNueva.query.filter_by(centro_id=centro_id)
-            .order_by(InstalacionNueva.id_instalacion.asc())
-            .first()
-        )
 
         if instalacion:
             instalacion.fecha_instalacion = fecha_instalacion
@@ -108,7 +119,8 @@ def crear_instalacion_logic(data, file):
             )
             db.session.add(instalacion)
 
-        centro.fecha_instalacion = fecha_instalacion
+        if principal is None or instalacion is principal:
+            centro.fecha_instalacion = fecha_instalacion
         db.session.flush()
         instalacion_id = instalacion.id_instalacion
         db.session.commit()

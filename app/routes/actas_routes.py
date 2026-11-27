@@ -98,15 +98,24 @@ def listar_actas():
 
         
         # Subconsultas para actividades
+        resumen_instalaciones = db.session.query(
+            InstalacionNueva.centro_id.label("cid"),
+            func.min(InstalacionNueva.id_instalacion).label("principal_id"),
+            func.max(case((and_(InstalacionNueva.documento_acta.is_not(None),
+                               InstalacionNueva.documento_acta != ''), InstalacionNueva.id_instalacion),
+                          else_=None)).label("documento_id"),
+            func.count(func.nullif(InstalacionNueva.documento_acta, '')).label("cantidad_documentos_instalacion")
+        ).group_by(InstalacionNueva.centro_id).subquery()
         instalaciones_subq = db.session.query(
             InstalacionNueva.centro_id.label("cid"),
             case(
-                (InstalacionNueva.documento_acta.is_not(None),
-                 func.concat("http://localhost:5000/api/filtro/documento/Instalaciones/", InstalacionNueva.id_instalacion)),
+                (resumen_instalaciones.c.documento_id.is_not(None),
+                 func.concat("/api/filtro/documento/Instalaciones/", resumen_instalaciones.c.documento_id)),
                 else_=None
             ).label("documento_instalacion"),
-            InstalacionNueva.fecha_instalacion.label("fecha_instalacion")
-        ).join(Centro, InstalacionNueva.centro_id == Centro.id_centro).subquery()
+            InstalacionNueva.fecha_instalacion.label("fecha_instalacion"),
+            resumen_instalaciones.c.cantidad_documentos_instalacion
+        ).join(resumen_instalaciones, resumen_instalaciones.c.principal_id == InstalacionNueva.id_instalacion).subquery()
 
         actas_entrega_subq = db.session.query(
             ActaEntrega.centro_id.label("cid"),
@@ -200,6 +209,7 @@ def listar_actas():
             Cliente.nombre.label("nombre_cliente"),
             instalaciones_subq.c.documento_instalacion,
             instalaciones_subq.c.fecha_instalacion,
+            instalaciones_subq.c.cantidad_documentos_instalacion,
             actas_entrega_subq.c.cantidad_actas_sistema,
             actas_entrega_subq.c.ultima_fecha_acta_sistema,
             permisos_trabajo_subq.c.cantidad_permisos_sistema,
@@ -248,6 +258,7 @@ def listar_actas():
                 "centro_fecha_termino": row.centro_fecha_termino,
                 "instalacion_fecha": row.fecha_instalacion,
                 "instalacion_documento": row.documento_instalacion,
+                "cantidad_documentos_instalacion": int(row.cantidad_documentos_instalacion or 0),
                 "cantidad_actas_sistema": int(row.cantidad_actas_sistema or 0),
                 "ultima_fecha_acta_sistema": row.ultima_fecha_acta_sistema,
                 "cantidad_permisos_sistema": int(row.cantidad_permisos_sistema or 0),

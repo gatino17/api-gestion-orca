@@ -165,6 +165,36 @@ class ActividadesExcelTest(unittest.TestCase):
             self.assertFalse(any(char in hoja.title for char in '[]:*?/\\'))
         self.assertEqual({hoja['A2'].value for hoja in libro}, set(nombres))
 
+    def test_varios_documentos_de_instalacion_no_multiplican_mantenciones(self):
+        db.session.add(models.InstalacionNueva(centro_id=1, fecha_instalacion=date(2026, 11, 27),
+            inicio_monitoreo=date(2026, 11, 27), documento_acta='segundo.pdf'))
+        db.session.add(models.Mantencion(centro_id=1, fecha_mantencion=date(2026, 11, 24), responsable='Tecnico'))
+        db.session.commit()
+        with patch('builtins.print'):
+            response = self.client.get('/api/actas/listar?id_centro=1')
+        self.assertEqual(response.status_code, 200)
+        filas = response.get_json()['actividades']
+        self.assertEqual(len(filas), 2)
+        self.assertTrue(all(fila['cantidad_documentos_instalacion'] == 2 for fila in filas))
+        self.assertTrue(all('20 Nov 2026' in fila['instalacion_fecha'] for fila in filas))
+        hoja = self.libro(self.descargar())['Cliente A']
+        self.assertIn('Manual: 2', hoja['D8'].value)
+        self.assertIn('Documentos manuales: 2', hoja['F8'].value)
+        self.assertIn('20/11/2026', hoja['F8'].value)
+
+    def test_documento_adicional_se_detecta_aunque_principal_no_tenga_archivo(self):
+        principal = models.InstalacionNueva.query.filter_by(centro_id=1).one()
+        principal.documento_acta = None
+        db.session.add(models.InstalacionNueva(centro_id=1, fecha_instalacion=date(2026, 11, 27),
+            inicio_monitoreo=date(2026, 11, 27), documento_acta='segundo.pdf'))
+        db.session.commit()
+        with patch('builtins.print'):
+            response = self.client.get('/api/actas/listar?id_centro=1')
+        fila = response.get_json()['actividades'][0]
+        self.assertEqual(fila['cantidad_documentos_instalacion'], 1)
+        self.assertTrue(fila['instalacion_documento'].startswith('/api/filtro/documento/Instalaciones/'))
+        self.assertIn('Documento disponible', self.libro(self.descargar())['Cliente A']['F8'].value)
+
     def test_texto_no_se_interpreta_como_formulas_y_fechas_rfc_son_validas(self):
         libro = load_workbook(excel.generar_actividades_excel([dict(id_centro=1, nombre_centro='=SUM(1,2)', nombre_cliente='=Cliente',
             area='@area', ubicacion='-ubicacion', levantamiento_documento='doc.pdf', levantamiento_fecha='Mon, 23 Nov 2026 00:00:00 GMT')]))
