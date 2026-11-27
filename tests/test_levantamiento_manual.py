@@ -24,6 +24,7 @@ db = importlib.import_module(NS + '.database').db
 routes = importlib.import_module(NS + '.routes.levantamientos_routes')
 actas = importlib.import_module(NS + '.routes.actas_routes')
 filtro = importlib.import_module(NS + '.routes.filtro_routes')
+historial = importlib.import_module(NS + '.routes.consultascentro_historial_routes')
 
 
 class LevantamientoManualTest(unittest.TestCase):
@@ -35,6 +36,7 @@ class LevantamientoManualTest(unittest.TestCase):
         cls.app.register_blueprint(routes.levantamientos_blueprint, url_prefix='/api/levantamientos')
         cls.app.register_blueprint(actas.actas_blueprint, url_prefix='/api/actas')
         cls.app.register_blueprint(filtro.filtro_blueprint, url_prefix='/api/filtro')
+        cls.app.register_blueprint(historial.consultascentro_historial_bp, url_prefix='/api/consultas_centro')
 
     def setUp(self):
         self.context = self.app.app_context()
@@ -106,6 +108,34 @@ class LevantamientoManualTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         fila = next(item for item in response.get_json()['actividades'] if item['id_centro'] == 1)
         self.assertTrue(fila['levantamiento_documento'].startswith('https://orca.example:24306/api/filtro/documento/Levantamientos/'))
+
+    def test_levantamiento_del_historial_abre_el_mismo_archivo_sin_localhost(self):
+        registro_id = self.subir(nombre='plano.pdf').get_json()['id_levantamiento']
+        response = self.client.get('/api/consultas_centro/centro_historial/1')
+        self.assertEqual(response.status_code, 200)
+        documento = response.get_json()['historial']['levantamientos'][0]['documento']
+        self.assertEqual(documento, f'/api/filtro/documento/Levantamientos/{registro_id}')
+        response = self.client.get(documento)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data, b'presentacion de prueba')
+        response.close()
+
+    def test_documentos_del_historial_no_fijan_host_ni_puerto(self):
+        fecha = date(2026, 11, 26)
+        db.session.add_all([
+            models.Traslado(id_traslado=1, centro_origen_id=1, centro_destino_id=2, fecha_traslado=fecha, documento_asociado='traslado.pdf'),
+            models.Cese(id_cese=1, centro_id=1, fecha_cese=fecha, documento_cese='cese.pdf'),
+            models.Retiro(id_retiro=1, centro_id=1, fecha_de_retiro=fecha, documento='retiro.pdf'),
+            models.Mantencion(id_mantencion=1, centro_id=1, fecha_mantencion=fecha, responsable='Tecnico', documento_mantencion='mantencion.pdf'),
+            models.Inventario(id_inventario=1, centro_id=1, documento='inventario.pdf'),
+        ])
+        db.session.commit()
+        response = self.client.get('/api/consultas_centro/centro_historial/1')
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        for seccion, tipo in [('traslados', 'Traslados'), ('ceses', 'Ceses'), ('retiros', 'Retiros'), ('mantenciones', 'Mantenciones')]:
+            self.assertEqual(data['historial'][seccion][0]['documento'], f'/api/filtro/documento/{tipo}/1')
+        self.assertEqual(data['inventario'][0]['documento'], '/api/inventarios/1/documento')
 
     def test_archivo_invalido_no_crea_un_registro_sin_documento(self):
         with patch.object(routes, 'MAX_DOCUMENTO_BYTES', 32):

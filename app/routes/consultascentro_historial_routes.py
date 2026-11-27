@@ -13,8 +13,6 @@ from datetime import datetime
 
 
 
-# Declarar la URL base
-BASE_URL = "http://localhost:5000"
 consultascentro_historial_bp = Blueprint('consultascentro_historial', __name__)
 
 # Ruta para obtener todos los clientes
@@ -88,7 +86,7 @@ def obtener_historial_centro(centro_id):
                 {
                     "id_levantamiento": l.id_levantamiento,
                     "fecha_levantamiento": l.fecha_levantamiento,
-                    "documento": f"{BASE_URL}/api/filtro/documento/Levantamientos/{l.id_levantamiento}" if l.documento_asociado else None,
+                    "documento": f"/api/filtro/documento/Levantamientos/{l.id_levantamiento}" if l.documento_asociado else None,
                 } for l in Levantamiento.query.filter_by(centro_id=centro_id).all()
             ],
             "instalaciones": [
@@ -105,7 +103,7 @@ def obtener_historial_centro(centro_id):
                     "id_mantencion": m.id_mantencion,
                     "fecha_mantencion": m.fecha_mantencion,
                     "responsable": m.responsable,
-                    "documento": f"{BASE_URL}/api/filtro/documento/Mantenciones/{m.id_mantencion}" if m.documento_mantencion else None,
+                    "documento": f"/api/filtro/documento/Mantenciones/{m.id_mantencion}" if m.documento_mantencion else None,
                     "observacion": m.observacion
                 } for m in Mantencion.query.filter_by(centro_id=centro_id).all()
             ],
@@ -115,7 +113,7 @@ def obtener_historial_centro(centro_id):
                     "centro_destino_id": t.centro_destino_id,
                     "centro_destino_nombre": destino.nombre if destino else "No especificado",  
                     "fecha_traslado": t.fecha_traslado,
-                    "documento": f"{BASE_URL}/api/filtro/documento/Traslados/{t.id_traslado}" if t.documento_asociado else None,
+                    "documento": f"/api/filtro/documento/Traslados/{t.id_traslado}" if t.documento_asociado else None,
                     "observacion":t.observacion
                 }  for t, destino in db.session.query(Traslado, Centro).filter(
                     Traslado.centro_origen_id == centro_id,
@@ -125,14 +123,14 @@ def obtener_historial_centro(centro_id):
                 {
                     "id_cese": c.id_cese,
                     "fecha_cese": c.fecha_cese,
-                    "documento": f"{BASE_URL}/api/filtro/documento/Ceses/{c.id_cese}" if c.documento_cese else None
+                    "documento": f"/api/filtro/documento/Ceses/{c.id_cese}" if c.documento_cese else None
                 } for c in Cese.query.filter_by(centro_id=centro_id).all()
             ],
             "retiros": [
                 {
                     "id_retiro": r.id_retiro,
                     "fecha_retiro": r.fecha_de_retiro,
-                    "documento": f"{BASE_URL}/api/filtro/documento/Retiros/{r.id_retiro}" if r.documento else None,
+                    "documento": f"/api/filtro/documento/Retiros/{r.id_retiro}" if r.documento else None,
                     "observacion":r.observacion
                 } for r in Retiro.query.filter_by(centro_id=centro_id).all()
             ],
@@ -164,7 +162,7 @@ def obtener_historial_centro(centro_id):
         inventario = [
             {
                 "id_inventario": inv.id_inventario,
-                "documento": f"{BASE_URL}/api/inventarios/{inv.id_inventario}/documento"
+                "documento": f"/api/inventarios/{inv.id_inventario}/documento"
             } for inv in Inventario.query.filter_by(centro_id=centro_id).all()
         ]
 
